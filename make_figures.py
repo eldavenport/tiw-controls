@@ -24,7 +24,11 @@ FIGS = f'{HERE}/figs'            # figures stay in the repo (deliverables)
 FIX_LABEL = {'prior': 'prior (no DA)', 'noVel': 'TPOSE6-noVel', 'Vel': 'TPOSE6-Vel (full)'}
 FIX_COLOR = {'prior': '0.5', 'noVel': 'tab:orange', 'Vel': 'tab:blue'}
 CTRL_COLOR = {'initialT': 'tab:green', 'initialS': 'tab:red', 'zonalWind': 'tab:purple',
-              'meridionalWind': 'tab:brown', 'swdown': 'tab:olive'}
+              'meridionalWind': 'tab:brown', 'swdown': 'tab:olive',
+              'atmosT': 'tab:cyan', 'atmosQ': 'tab:pink', 'lwdown': 'gold',
+              'precip': 'tab:blue', 'uvel': 'darkgray', 'vvel': 'slategray'}
+# all single-control runs, kept + null, ordered for the summary ranking figure.
+ALL_CONTROLS = tiw.CONTROLS + tiw.CONTROLS_NULL
 
 PRODS = [('argo_T', 'Argo T', '°C'), ('argo_S', 'Argo S', 'psu'),
          ('tao_U', 'TAO U', 'm/s'), ('tao_V', 'TAO V', 'm/s'),
@@ -259,6 +263,12 @@ _FINGERPRINT = {
     'zonalWind':      ('UVEL', -1,  'cumulative U response (day 121)', 'm/s'),
     'meridionalWind': ('VVEL', -1,  'cumulative V response (day 121)', 'm/s'),
     'swdown':         ('THETA', -1, 'cumulative T response (day 121)', '°C'),
+    'atmosT':         ('THETA', -1, 'cumulative T response (day 121)', '°C'),
+    'atmosQ':         ('THETA', -1, 'cumulative T response (day 121)', '°C'),
+    'lwdown':         ('THETA', -1, 'cumulative T response (day 121)', '°C'),
+    'precip':         ('SALT', -1,  'cumulative S response (day 121)', 'psu'),
+    'uvel':           ('UVEL', 0,   'initial-U increment', 'm/s'),
+    'vvel':           ('VVEL', 0,   'initial-V increment', 'm/s'),
 }
 
 
@@ -426,8 +436,52 @@ def fig_decomp_maps(controls, outdir):
         fig.tight_layout(); fig.savefig(f'{outdir}/decomp_{prod}_maps.png', dpi=140); plt.close(fig)
 
 
+# ============================================================================
+# High-level summary: rank each single control's influence on skill per target.
+# Two RMSE views, both straight from metrics.csv (prior=iter0 baseline, Vel=full):
+#   (a) % RMSE improvement vs prior  = 100*(prior-ctrl)/prior
+#   (b) share of the full-DA improvement captured = (prior-ctrl)/(prior-Vel)
+# Rows sorted by mean (a) over targets => the ranking.
+# ============================================================================
+def fig_summary(controls, outdir):
+    r = _rmse_pivot(_metrics())
+    prods = [p for p in PRODS if p[0] in r.index and 'prior' in r.columns
+             and np.isfinite(r.loc[p[0], 'prior'])]
+    controls = [c for c in controls if c in r.columns]
+    keys = [p[0] for p in prods]; labels = [p[1] for p in prods]
+
+    pct = np.array([[100 * (r.loc[k, 'prior'] - r.loc[k, c]) / r.loc[k, 'prior']
+                     for k in keys] for c in controls])
+    share = np.array([[100 * (r.loc[k, 'prior'] - r.loc[k, c])
+                       / (r.loc[k, 'prior'] - r.loc[k, 'Vel']) for k in keys]
+                      for c in controls])
+    order = np.argsort(-np.nanmean(pct, axis=1))          # rank by mean % improvement
+    controls = [controls[i] for i in order]; pct = pct[order]; share = share[order]
+    ylab = [tiw.CONTROL_XX[c] for c in controls]
+
+    fig, axs = plt.subplots(1, 2, figsize=(15, 1.0 + 0.55 * len(controls)))
+    for ax, M, ttl, lim in [
+            (axs[0], pct, '(a) % RMSE improvement vs prior (iter0)', 10),
+            (axs[1], share, '(b) % of full-DA (Vel) improvement captured', 100)]:
+        im = ax.imshow(M, cmap='RdBu_r', vmin=-lim, vmax=lim, aspect='auto')
+        ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=30, ha='right')
+        ax.set_yticks(range(len(controls))); ax.set_yticklabels(ylab)
+        for i in range(M.shape[0]):
+            for j in range(M.shape[1]):
+                v = M[i, j]
+                ax.text(j, i, 'n/a' if not np.isfinite(v) else f'{v:.0f}',
+                        ha='center', va='center', fontsize=8,
+                        color='k' if abs(v) < lim * 0.6 else 'w')
+        ax.set_title(ttl); fig.colorbar(im, ax=ax, shrink=.7)
+    fig.suptitle('Single-control influence on skill, ranked (top = most skill improvement)')
+    fig.tight_layout(); fig.savefig(f'{outdir}/summary_ranking.png', dpi=140); plt.close(fig)
+    # dump the numbers so claims trace to data, not the picture
+    pd.DataFrame(pct, index=ylab, columns=labels).to_csv(f'{outdir}/summary_pct_vs_prior.csv')
+    pd.DataFrame(share, index=ylab, columns=labels).to_csv(f'{outdir}/summary_share_of_Vel.csv')
+
+
 if __name__ == '__main__':
-    controls = [c for c in tiw.CONTROLS
+    controls = [c for c in ALL_CONTROLS
                 if os.path.exists(f'{CACHE}/model_{c}_argo_T.npy')]
     for c in controls:
         d = f'{FIGS}/{c}'; os.makedirs(d, exist_ok=True)
@@ -444,10 +498,19 @@ if __name__ == '__main__':
         except Exception as e:
             print(f'[intercomp] {fn.__name__} FAILED: {type(e).__name__}: {e}')
     print(f'[intercomp] done -> {di}  (controls: {controls})')
+    # decomposition on the KEPT controls only (uvel/vvel excluded from the
+    # projection budget / combos per TODO; they fall into the untested residual).
+    kept = [c for c in tiw.CONTROLS if c in controls]
     dd = f'{FIGS}/decomposition'; os.makedirs(dd, exist_ok=True)
     for fn in (fig_decomp_bars, fig_decomp_depth, fig_decomp_maps):
         try:
-            fn(controls, dd)
+            fn(kept, dd)
         except Exception as e:
             print(f'[decomp] {fn.__name__} FAILED: {type(e).__name__}: {e}')
     print(f'[decomp] done -> {dd}')
+    ds = f'{FIGS}/summary'; os.makedirs(ds, exist_ok=True)
+    try:
+        fig_summary(controls, ds)
+        print(f'[summary] done -> {ds}')
+    except Exception as e:
+        print(f'[summary] fig_summary FAILED: {type(e).__name__}: {e}')

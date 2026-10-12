@@ -35,12 +35,28 @@ RUNS = {
     'zonalWind':      (f'{_EXP}/run_zonalWind',      72, 1200),
     'meridionalWind': (f'{_EXP}/run_meridionalWind', 72, 1200),
     'swdown':         (f'{_EXP}/run_swdown',         72, 1200),
+    'atmosT':         (f'{_EXP}/run_atmosT',         72, 1200),  # xx_atemp
+    'atmosQ':         (f'{_EXP}/run_atmosQ',         72, 1200),  # xx_aqh
+    'lwdown':         (f'{_EXP}/run_lwdown',         72, 1200),
+    'precip':         (f'{_EXP}/run_precip',         72, 1200),
+    'uvel':           (f'{_EXP}/run_uvel',           72, 1200),
+    'vvel':           (f'{_EXP}/run_vvel',           72, 1200),
+    # combination runs (fixed-increment: named controls ON at full-solution values).
+    'initialT_uwind': (f'{_EXP}/run_initialT_uwind', 72, 1200),  # theta x uwind
 }
+# combo run -> (single_i, single_j) it decomposes. a_ij = m_ij - m_i - m_j + m_prior.
+COMBOS = {'initialT_uwind': ('initialT', 'zonalWind')}
 # single-control experiments, all verified applied + complete (122 daily records).
-CONTROLS = ['initialT', 'initialS', 'zonalWind', 'meridionalWind', 'swdown']
+# forcing/IC controls kept for decomposition + combination runs.
+CONTROLS = ['initialT', 'initialS', 'zonalWind', 'meridionalWind', 'swdown',
+            'atmosT', 'atmosQ', 'lwdown', 'precip']
+# velocity-IC solo null-checks: analyzed individually, EXCLUDED from combos (TODO).
+CONTROLS_NULL = ['uvel', 'vvel']
 # the control field each run perturbs (for labels / IC-increment plots)
 CONTROL_XX = {'initialT': 'xx_theta', 'initialS': 'xx_salt', 'zonalWind': 'xx_uwind',
-              'meridionalWind': 'xx_vwind', 'swdown': 'xx_swdown'}
+              'meridionalWind': 'xx_vwind', 'swdown': 'xx_swdown',
+              'atmosT': 'xx_atemp', 'atmosQ': 'xx_aqh', 'lwdown': 'xx_lwdown',
+              'precip': 'xx_precip', 'uvel': 'xx_uvel', 'vvel': 'xx_vvel'}
 
 # model field name + its horizontal grid coords, per obs variable
 FIELD = {
@@ -70,8 +86,16 @@ def load_run(name, prefix=('diag_state',)):
     matching is exact and gaps leave a true hole rather than shifting days.
     """
     data_dir, itpf, dt = RUNS[name]
-    its = sorted(int(os.path.basename(f).split('.')[1])
-                 for f in glob.glob(f'{data_dir}/{prefix[0]}.*.data'))
+    # a .data with no matching .meta can't be read (xmitgcm needs dims/dtype
+    # from the meta). Missing model output is a breaking error: fail loud with
+    # the offending files so it gets fixed, don't silently drop records.
+    datafiles = glob.glob(f'{data_dir}/{prefix[0]}.*.data')
+    orphans = [f for f in datafiles if not os.path.exists(f[:-5] + '.meta')]
+    if orphans:
+        raise FileNotFoundError(
+            f'{name}/{prefix[0]}: {len(orphans)} .data file(s) missing their .meta '
+            f'(cannot be read): ' + ', '.join(sorted(os.path.basename(f) for f in orphans)))
+    its = sorted(int(os.path.basename(f).split('.')[1]) for f in datafiles)
     expected = list(range(its[0], its[-1] + 1, itpf))
     if len(its) != len(expected):                       # never drop a day silently
         missing = sorted(set(expected) - set(its))

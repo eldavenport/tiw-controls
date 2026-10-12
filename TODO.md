@@ -10,31 +10,54 @@ re-optimize in combos), so a_ij = M(i+j) − M(i) − M(j) + M(prior) is exact.
 Decompose in increment/innovation space (βᵢ = ⟨d_i,d_full⟩/⟨d_full,d_full⟩),
 keep RMSE as the fit/phase metric.
 
-### Step 1 — finish main effects (singles)
-Done: θ, salt, uwind, vwind, swdown. Remaining:
-- [ ] **xx_atemp**, **xx_aqh**, **xx_lwdown**, **xx_precip** — PRIORITY (forcing; small
-      increments still integrate over the window, so amplitude ≠ effect).
-- [ ] xx_uvel, xx_vvel — run the solo experiments to confirm the null, then
-      EXCLUDE from the subset / combination runs. Pre-screen: full-solution
-      increment is ~0.0005 m/s RMS = 0.4–0.7% of field variability (vs θ 4%, S 8%),
-      and IC-velocity memory decays over the window, so effect is expected ~0.
-      (Don't add to tiw.CONTROLS beyond the solo check.)
+### Step 1 — finish main effects (singles)  — DONE (all 11 singles run + sampled)
+Done: θ, salt, uwind, vwind, swdown.
+- [x] **xx_atemp**, **xx_aqh**, **xx_lwdown**, **xx_precip** — run + sampled. Result:
+      individually ~null on every target (mean %RMSE-vs-prior ≤0.4%; precip only
+      exceeds 1% anywhere, on SSH). Despite integrating over the window, their T/S
+      response (p99 ~0.06°C / 0.03 psu at day121) barely clears the ~0.05°C null-drift
+      floor. See figs/summary/summary_ranking.png + summary_pct_vs_prior.csv.
+- [x] xx_uvel, xx_vvel — solo null CONFIRMED (≤0.8% on any target; day0 IC increment
+      ~0.0005 m/s RMS as pre-screened, decays over window). EXCLUDED from combos:
+      kept in tiw.CONTROLS_NULL, not tiw.CONTROLS. See summary_ranking.png bottom rows.
+  Ranking (mean %RMSE vs prior): θ 11.7 > uwind 5.1 > salt 4.8 > swdown 1.8 >
+  vwind 0.5 > precip 0.4 > vvel/aqh/uvel/lwdown/atemp ≤0.16.
 
-### Step 2 — screen into a subset
-Rank all singles by βᵢ (projection share) AND RMSE improvement, PER TARGET
-(EUC U, TIW V, SST, Argo T/S, SSH). Include any control exceeding ~5% on any
-target of interest, plus any dynamically-essential one.
-Caveat: screening on main effects is a good INCLUDE filter, weak EXCLUDE filter
-(synergy). Guards: (a) flag controls with large full increment but ~0 solo
+### Step 2 — screen into a subset  — RESOLVED
+Rule: include any control exceeding ~5% RMSE-vs-prior on any target, plus any
+dynamically-essential one. Applied to summary_pct_vs_prior.csv (βᵢ in
+figs/decomposition/decomp_work_shares.png agrees):
+- SUBSET (kept for combos): **θ** (all targets), **uwind** (TAO U 10%, TAO V 14%),
+  **salt** (Argo S 19%, TAO U 5%), **swdown** (SST 6%).
+- EXCLUDED, <5% everywhere: vwind (peak ~2% TAO U) → BORDERLINE, hold as a
+  leave-one-out candidate; atemp/aqh/lwdown/precip ~null; uvel/vvel null.
+Caveat: main-effect screen is a good INCLUDE filter, weak EXCLUDE filter (synergy).
+Guards carried into Step 3: (a) flag controls with large full increment but ~0 solo
 effect; (b) after reduced-full, check Σ(singles) vs reduced-full; (c) leave-one-out
-for borderline controls.
+for borderline controls (vwind first).
 
-### Step 3 — the subset defines the combination runs
-- [ ] reduced-full: all subset controls ON together → total interaction of the set.
-- [ ] priority pairs within the subset: θ×uwind (EUC/TIW shear), θ×salt (density/
-      barrier layer), θ×swdown, uwind×swdown (SST front↔wind). Add θ×uvel / uwind×uvel
-      only if uvel is kept.
-- [ ] optional triad θ×uwind×(uvel|swdown) for 3rd-order on the EUC/TIW core.
+### Step 3 — combination runs to do (FIXED-INCREMENT, NO RE-OPTIMIZATION)
+Each combo = ONE forward run: the named controls set to their FULL-solution
+optimized increments, every other control at background. Do NOT re-solve the
+optimization. Then just sample + score with the existing pipeline (add each run
+to tiw.RUNS and `compute_metrics.py <run>`); a_ij = m_ij − m_i − m_j + m_prior.
+Subset = {θ, uwind, salt, swdown}.
+- [ ] reduced-full: θ+uwind+salt+swdown ON together → total interaction of the set
+      (and reduced-full vs Vel = contribution of the excluded/untested controls).
+- [x] θ×uwind (EUC/TIW shear) — run_initialT_uwind, verified + scored. Combined beats
+      BOTH singles on every target (e.g. TAO V 0.131 vs 0.165/0.170; TAO U 0.184 vs
+      0.207/0.235). Interaction a_ij is 29–61% of the combined increment (largest for
+      velocity + SST) → the pair is strongly nonlinear, combined ≠ sum of singles.
+      TIW interaction carries organized westward-propagating wave structure (RMS 0.044 ≈
+      sum-of-mains 0.052) → θ×uwind reshapes TIW phase, not just amplitude. Figs:
+      figs/anova/initialT_uwind_{euc,tiw,budget}.png + _budget.csv. See combo.py.
+- [ ] priority pairs remaining: θ×salt (density/barrier layer), θ×swdown (SST),
+      uwind×swdown (SST front↔wind).
+- [ ] secondary pairs (lower priority): salt×uwind, salt×swdown.
+- [ ] triad: θ×uwind×swdown (EUC/TIW + SST core) for 3rd-order.
+- [ ] leave-one-out (borderline guard): reduced-full minus vwind is already the
+      reduced-full above; if vwind is later reconsidered, run θ+uwind+salt+swdown+vwind.
+Dropped: all uvel/vvel combos (solo-null, excluded in Step 2).
 
 ## ANOVA module (NOT YET BUILT — design only)
 Build once combination runs (reduced-full + pairs) land. Add to the pipeline
