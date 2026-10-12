@@ -1,7 +1,7 @@
 # TODO
 
 ## Open
-- [ ] Copy `diag_surf` output for **iter0** (prior) so it has `ETAN` → SSH baseline vs prior (currently SSH `prior` is null; SSH falls back to noVel, which makes the SSH increment decomposition unreliable). Then rerun `compute_metrics.py prior` + `make_figures.py`.
+(none)
 
 ## Decomposition experiment plan (main-effect screening → subset → interactions)
 Framework: multilinear/ANOVA decomposition of the full solution. Each control's
@@ -55,6 +55,10 @@ and grid_<run>_*); no new sampling logic.
   a_ij maps for the dominant pairs (expected θ×uwind for EUC/TIW).
 
 ## Done
+- [x] iter0 `diag_surf` (ETAN) now present → SSH baseline is prior (iter0) for all
+      figures/decomposition (dropped the noVel fallback). prior SSH RMSE 0.0489 m
+      > noVel 0.0473 > Vel 0.0468, so Vel improves SSH ~4% over prior (the noVel
+      baseline was masking it). Reran compute_metrics.py prior + make_figures.py.
 - [x] Verified + sampled the 5 single-control runs; metrics in cache/metrics.csv.
 - [x] Per-experiment figures figs/<control>/ ; cross-experiment figs/intercomparison/ ;
       increment-decomposition figs/decomposition/ (work shares, depth, SST/SSH maps).

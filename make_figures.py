@@ -57,7 +57,7 @@ def _rmse_pivot(df):
 
 
 def _baseline(r, prod):
-    """prior where available, else noVel (SSH has no prior)."""
+    """prior (iter0) where available, else noVel."""
     return 'prior' if (prod in r.index and np.isfinite(r.loc[prod, 'prior'])) else 'noVel'
 
 
@@ -87,7 +87,7 @@ def fig_headline(control, outdir):
     ax[0].set_title(f'(a) {xx}-only RMSE improvement vs prior (iter0) & noVel')
     ax[0].legend(fontsize=8, loc='upper right')
 
-    # (b) RMSE relative to prior (iter0); SSH relative to noVel
+    # (b) RMSE relative to prior (iter0)
     x = np.arange(len(prods)); w = 0.2
     runs = order_of(control)
     for i, run in enumerate(runs):
@@ -96,7 +96,7 @@ def fig_headline(control, outdir):
         ax[1].bar(x + (i - 1.5) * w, vals, w, label=label_of(run, control), color=color_of(run, control))
     ax[1].set_xticks(x); ax[1].set_xticklabels([p[1] for p in prods])
     ax[1].axhline(1, color='k', lw=.8, ls=':'); ax[1].set_ylim(0, 1.3)
-    ax[1].set_ylabel('RMSE / prior (iter0) RMSE   (SSH: / noVel)')
+    ax[1].set_ylabel('RMSE / prior (iter0) RMSE')
     ax[1].set_title('(b) Relative misfit by run')
     ax[1].legend(fontsize=7, loc='upper center', ncol=4)
     fig.tight_layout(); fig.savefig(f'{outdir}/fig1_headline.png', dpi=140); plt.close(fig)
@@ -229,7 +229,7 @@ def fig_maps(control, outdir):
     ref = xr.open_dataarray(f'{CACHE}/grid_Vel_sst.nc')
     XC, YC = ref.XC.values, ref.YC.values
     for prod in ('sst', 'ssh'):
-        base = 'prior' if prod == 'sst' else 'noVel'
+        base = 'prior'
         if not (os.path.exists(f'{CACHE}/grid_{base}_{prod}.nc')
                 and os.path.exists(f'{CACHE}/grid_{control}_{prod}.nc')):
             continue
@@ -308,8 +308,6 @@ def fig_intercomp_bars(controls, outdir):
         ax.axhline(0, color='k', lw=.8); ax.grid(axis='y', alpha=.3)
         ax.set_ylabel('% RMSE improvement'); ax.set_title(ttl)
         ax.legend(fontsize=8, ncol=len(controls), loc='upper right')
-    axs[1].annotate('SSH has no prior baseline (iter0 lacks diag_surf)', (0, 0),
-                    (0.01, -0.18), xycoords='axes fraction', fontsize=8, color='0.4')
     fig.suptitle('Which control drives which improvement (single-control runs)')
     fig.tight_layout(); fig.savefig(f'{outdir}/intercomp_improvement.png', dpi=140); plt.close(fig)
 
@@ -340,10 +338,10 @@ def fig_intercomp_depth(controls, outdir):
 #   projection share  beta_i = <d_i, d_full> / <d_full, d_full>
 #   sum_i beta_i + (interaction+untested residual) = 1
 # Done in model-equivalent / state space (NOT RMSE), the quantity that actually
-# decomposes. SSH uses noVel as reference (iter0 has no SSH).
+# decomposes. All products reference prior (iter0).
 # ============================================================================
 def _incr_vectors(prodkey, controls):
-    base = 'noVel' if prodkey == 'ssh' else 'prior'
+    base = 'prior'
     if prodkey in ('sst', 'ssh'):
         load = lambda r: xr.open_dataarray(f'{CACHE}/grid_{r}_{prodkey}.nc').values
     else:
@@ -378,7 +376,7 @@ def fig_decomp_bars(controls, outdir):
     ax.axhline(0, color='k', lw=.8); ax.axhline(100, color='k', lw=.6, ls=':')
     ax.grid(axis='y', alpha=.3); ax.set_ylabel('% of full increment (projection share)')
     ax.set_title('Work done by each control toward the full solution '
-                 r'($\beta_i=\langle d_i,d_{full}\rangle/\langle d_{full},d_{full}\rangle$; SSH ref=noVel)')
+                 r'($\beta_i=\langle d_i,d_{full}\rangle/\langle d_{full},d_{full}\rangle$)')
     ax.legend(fontsize=8, ncol=len(controls) + 1, loc='upper right')
     fig.tight_layout(); fig.savefig(f'{outdir}/decomp_work_shares.png', dpi=140); plt.close(fig)
 
@@ -408,7 +406,7 @@ def fig_decomp_depth(controls, outdir):
 
 def fig_decomp_maps(controls, outdir):
     for prod in ('sst', 'ssh'):
-        base = 'noVel' if prod == 'ssh' else 'prior'
+        base = 'prior'
         if not os.path.exists(f'{CACHE}/grid_{base}_{prod}.nc'):
             continue
         ref = xr.open_dataarray(f'{CACHE}/grid_Vel_{prod}.nc')
