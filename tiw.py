@@ -43,9 +43,40 @@ RUNS = {
     'vvel':           (f'{_EXP}/run_vvel',           72, 1200),
     # combination runs (fixed-increment: named controls ON at full-solution values).
     'initialT_uwind': (f'{_EXP}/run_initialT_uwind', 72, 1200),  # theta x uwind
+    'theta_salt':     (f'{_EXP}/run_theta_salt',     72, 1200),  # theta x salt
+    'theta_swdown':   (f'{_EXP}/run_theta_swdown',   72, 1200),  # theta x swdown
+    'uwind_swdown':   (f'{_EXP}/run_uwind_swdown',   72, 1200),  # uwind x swdown
+    'salt_swdown':    (f'{_EXP}/run_salt_swdown',    72, 1200),  # salt x swdown
+    'salt_uwind':     (f'{_EXP}/run_salt_uwind',     72, 1200),  # salt x uwind
+    # reduced-full: subset {theta,uwind,salt,swdown} all ON (not a pair -> not in COMBOS).
+    'top4':           (f'{_EXP}/run_top4',           72, 1200),
+    # triads (not pairs -> not in COMBOS; see TRIADS).
+    'theta_salt_uwind':   (f'{_EXP}/run_theta_salt_uwind',   72, 1200),
+    'theta_salt_swdown':  (f'{_EXP}/run_theta_salt_swdown',  72, 1200),  # pending run
+    'theta_uwind_swdown': (f'{_EXP}/run_theta_uwind_swdown', 72, 1200),  # pending run
+    'salt_uwind_swdown':  (f'{_EXP}/run_salt_uwind_swdown',  72, 1200),  # pending run
+}
+# triad run -> (i, j, k) singles. Total interaction = d_ijk - (d_i+d_j+d_k); the clean
+# 3-way a_ijk also needs all three pair runs (salt_uwind pair still pending/broken).
+TRIADS = {
+    'theta_salt_uwind':   ('initialT', 'initialS',  'zonalWind'),
+    'theta_salt_swdown':  ('initialT', 'initialS',  'swdown'),
+    'theta_uwind_swdown': ('initialT', 'zonalWind', 'swdown'),
+    'salt_uwind_swdown':  ('initialS', 'zonalWind', 'swdown'),
 }
 # combo run -> (single_i, single_j) it decomposes. a_ij = m_ij - m_i - m_j + m_prior.
-COMBOS = {'initialT_uwind': ('initialT', 'zonalWind')}
+# Verified fixed-increment: each ON field is byte-identical to its single-control run,
+# each OFF field byte-identical to background (iter0).
+COMBOS = {
+    'initialT_uwind': ('initialT', 'zonalWind'),
+    'theta_salt':     ('initialT', 'initialS'),
+    'theta_swdown':   ('initialT', 'swdown'),
+    'uwind_swdown':   ('zonalWind', 'swdown'),
+    'salt_swdown':    ('initialS', 'swdown'),
+    'salt_uwind':     ('initialS', 'zonalWind'),
+}
+# reduced-full run (subset all-ON); scored like any run, decomposed separately (not pairwise).
+REDUCED_FULL = 'top4'
 # single-control experiments, all verified applied + complete (122 daily records).
 # forcing/IC controls kept for decomposition + combination runs.
 CONTROLS = ['initialT', 'initialS', 'zonalWind', 'meridionalWind', 'swdown',
