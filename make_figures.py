@@ -30,7 +30,7 @@ CTRL_HILITE = 'tab:green'
 CTRL_COLOR = {'initialT': 'tab:green', 'initialS': 'tab:red', 'zonalWind': 'tab:purple',
               'meridionalWind': 'tab:brown', 'swdown': 'tab:olive',
               'atmosT': 'tab:cyan', 'atmosQ': 'tab:pink', 'lwdown': 'gold',
-              'precip': 'tab:blue', 'uvel': 'darkgray', 'vvel': 'slategray',
+              'precip': 'teal', 'uvel': 'darkgray', 'vvel': 'slategray',
               'initialT_uwind': CTRL_HILITE, 'theta_salt': CTRL_HILITE,
               'theta_salt_uwind': CTRL_HILITE, 'top4': CTRL_HILITE}
 # multi-control combo runs to also render as per-experiment figures (figs 1-5;
@@ -107,16 +107,16 @@ def fig_headline(control, outdir):
                        va='bottom' if (np.isfinite(v) and v >= 0) else 'top', fontsize=8)
     ax[0].set_xticks(x); ax[0].set_xticklabels([p[1] for p in prods])
     ax[0].axhline(0, color='k', lw=.8)
-    ax[0].set_ylabel(f'% RMSE improvement of TPOSE6-Vel ({xx})')
+    ax[0].set_ylabel('% RMSE improvement')
     ax[0].set_title(f'(a) {xx}-only RMSE improvement vs prior (iter0) & noVel')
     ax[0].legend(fontsize=8, loc='upper right')
 
     # (b) RMSE relative to baseline. Prior bar omitted (it is 1 by construction).
-    #     Control bar gets a fixed highlight color so it reads clearly against the
-    #     noVel/Vel blues rather than CTRL_COLOR (slategray/darkgray/tab:blue collide).
+    #     Control bar uses the same color as panel (a) (CTRL_COLOR[control]).
     x = np.arange(len(prods)); w = 0.25
     runs = ['noVel', control, 'Vel']
-    bcolor = {'noVel': FIX_COLOR['noVel'], control: CTRL_HILITE, 'Vel': FIX_COLOR['Vel']}
+    bcolor = {'noVel': FIX_COLOR['noVel'], control: color_of(control, control),
+              'Vel': FIX_COLOR['Vel']}
     for i, run in enumerate(runs):
         vals = [r.loc[k, run] / r.loc[k, _baseline(r, k)] if run in r.columns else np.nan
                 for k, _, _ in prods]
@@ -124,7 +124,7 @@ def fig_headline(control, outdir):
     ax[1].set_xticks(x); ax[1].set_xticklabels([p[1] for p in prods])
     ax[1].axhline(1, color='k', lw=.8, ls=':'); ax[1].set_ylim(0, 1.3)
     ax[1].set_ylabel('RMSE / prior (iter0) RMSE')
-    ax[1].set_title('(b) Relative misfit by run')
+    ax[1].set_title('(b) RMSE/prior RMSE')
     ax[1].legend(fontsize=7, loc='upper center', ncol=3)
     fig.tight_layout(); fig.savefig(f'{outdir}/fig1_headline.png', dpi=140); plt.close(fig)
 

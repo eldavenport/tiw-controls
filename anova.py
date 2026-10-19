@@ -421,20 +421,23 @@ def _tiw_src(run, channel):
     return os.path.exists(f)
 
 
-def _tiw_hov_obs(channel):
-    """Observed TIW Hovmöller (time, XC), same band/region as the model (SST=mw_fusion,
-    SSH=RADS multi-sat anomaly). No gridded V obs (TAO is sparse) -> SST/SSH only."""
-    field = 'sst' if channel == 'SST' else 'ssh'
+def _gridded_obs_raw(field):
+    """Full (time, YC, XC) observed field over the model grid: SST=mw_fusion, SSH=RADS anomaly."""
     ref = xr.open_dataarray(f'{CACHE}/grid_Vel_{field}.nc')
     ny, nx = ref.sizes['YC'], ref.sizes['XC']
-    if channel == 'SST':
+    if field == 'sst':
         sst, _ = tiw.load_sst(nx, ny)
         o = np.moveaxis(sst[:, :, SEP1:SEP1 + tiw.NT], 2, 0)
     else:
         rads = tiw.load_rads(nx, ny)
         arrs = [np.moveaxis(rads[s][:, :, SEP1:SEP1 + tiw.NT], 2, 0) for s in rads]
         o = np.nanmean(np.stack([a - np.nanmean(a, axis=0, keepdims=True) for a in arrs]), axis=0)
-    da = xr.DataArray(o, dims=('time', 'YC', 'XC'), coords={'YC': ref.YC, 'XC': ref.XC})
+    return xr.DataArray(o, dims=('time', 'YC', 'XC'), coords={'YC': ref.YC, 'XC': ref.XC})
+
+
+def _tiw_hov_obs(channel):
+    """Observed TIW Hovmöller (time, XC): band-mean over the TIW lat/lon window. SST/SSH only."""
+    da = _gridded_obs_raw('sst' if channel == 'SST' else 'ssh')
     return da.sel(YC=slice(*TIW_SST_LAT)).mean('YC').sel(XC=slice(*TIW_REGION))
 
 
@@ -472,10 +475,9 @@ def tiw_phase_amp(channel):
     E = {r: float(np.sqrt(np.mean(np.abs(Z[r].values) ** 2))) for r in runs}   # total TIW energy (RMS)
     cv = c['Vel'].real                                           # = ||z_Vel|| (real, positive)
     Tdom = _tiw_period(Z['Vel'])
-    lam = np.mean((TIW_BAND['wav']))                             # nominal wavelength for deg->lon
 
     rows, phase_rows = [], []
-    amp_sum = pha_sum = 0 + 0j
+    amp_sum = 0 + 0j
     for S in subsets():
         a = _incl_excl(c, S)                                     # complex contribution
         amp_sum += a
@@ -675,30 +677,36 @@ def tiw_skill_vs_obs(channel):
     return df
 
 
-def tiw_tao_skill():
-    """Per-run TIW-V coherence / amplitude-ratio / lag vs the TAO current meters, aggregated
-    over the 3 equatorial moorings and depth (0 to -250 m): bar-chart analog of
-    tiw_skill_vs_obs but for the velocity observations (single-point, temporal band only)."""
+def _tao_bandstack(var, runs):
+    """TIW-band analytic field stacked over the 3 eq. moorings × obs-covered depths (0 to
+    -250 m), for obs and each run. Coverage mask comes from the obs. Returns (zo, {run: zm}),
+    each (nt, cols) complex. Shared by the TAO skill bars and the TAO band-RMSE figure."""
     o = np.load(f'{CACHE}/obs_tao.npz')
     lon, lat, day, depth = o['lon'], o['lat'], o['day'], o['depth']
-    obs_masked = np.where(o['w_V'] > 0, o['obs_V'], -9999.)
+    obs_masked = np.where(o[f'w_{var}'] > 0, o[f'obs_{var}'], -9999.)
     nt = tiw.NT; dsel = depth >= -250
-    runs = [r for r in VS_OBS_RUNS if os.path.exists(f'{CACHE}/model_{r}_tao_V.npy')]
-    Ocols, Mcols = [], {r: [] for r in runs}
+    mods = {r: np.load(f'{CACHE}/model_{r}_tao_{var}.npy') for r in runs}
+    Oc, Mc = [], {r: [] for r in runs}
     for mlon in TAO_PA_MOORINGS:
         sel = (np.abs(lon - mlon) < 0.6) & (np.abs(lat) < 0.6) & (day >= 0) & (day < nt)
         od = _tao_daily(obs_masked, day, sel, nt)[:, dsel]
-        cov = np.isfinite(od).mean(0) >= 0.5                  # keep depths with real obs
-        Ocols.append(_bandpass_time(od[:, cov]))
+        cov = np.isfinite(od).mean(0) >= 0.5
+        Oc.append(_bandpass_time(od[:, cov]))
         for r in runs:
-            md = _tao_daily(np.load(f'{CACHE}/model_{r}_tao_V.npy'), day, sel, nt)[:, dsel][:, cov]
-            Mcols[r].append(_bandpass_time(md))
-    zo = np.concatenate(Ocols, axis=1); Tdom = _period_days(zo)
+            Mc[r].append(_bandpass_time(_tao_daily(mods[r], day, sel, nt)[:, dsel][:, cov]))
+    return np.concatenate(Oc, axis=1), {r: np.concatenate(Mc[r], axis=1) for r in runs}
+
+
+def tiw_tao_skill():
+    """Per-run TIW-V coherence / amplitude-ratio / lag vs the TAO current meters, aggregated
+    over the 3 equatorial moorings and depth (0 to -250 m)."""
+    runs = [r for r in VS_OBS_RUNS if os.path.exists(f'{CACHE}/model_{r}_tao_V.npy')]
+    zo, Z = _tao_bandstack('V', runs)
+    Tdom = _period_days(zo)
     o_all = zo.ravel(); no = np.linalg.norm(o_all)
     rows = []
     for r in runs:
-        z = np.concatenate(Mcols[r], axis=1).ravel()
-        c = np.vdot(o_all, z)
+        z = Z[r].ravel(); c = np.vdot(o_all, z)
         rows.append(dict(run=r, label=_run_label(r), coherence=abs(c) / (no * np.linalg.norm(z)),
                          amp_ratio=np.linalg.norm(z) / no, lag_days=np.angle(c) / (2 * np.pi) * Tdom))
     df = pd.DataFrame(rows)
@@ -708,6 +716,123 @@ def tiw_tao_skill():
                 f'aggregated; temporal band {TIW_BAND["per"]} d)',
                 'tiw_tao_skill_vs_obs.png', 'coherence with TAO-V TIW  [0–1]')
     return df
+
+
+# ---- (2f2) RMSE reduction restricted to the TIW region (not domain-wide) --------
+# Separates "overall skill gain" from "TIW improvement": domain-total RMSE (what the
+# headline figures use) vs TIW-box total RMSE vs TIW-box BAND-PASSED RMSE (the clean
+# TIW-variability metric; mixes out the regional mean-state bias).
+TIW_RMSE_BOX = dict(lat=(2, 6), lon=(180, 270))   # TIW SST/SSH cusps, cold-tongue N flank
+
+
+def _tfilter(x, mode):
+    """Per-column temporal filter (nt, ncols) -> real filtered field. NaNs filled at the
+    column mean. 'band' = TIW period band (15-40 d), demeaned; 'low' = periods > 40 d
+    including the time mean (the large-scale / mean-state + seasonal part)."""
+    mu = np.nanmean(x, axis=0, keepdims=True)
+    f = np.nan_to_num(x - mu)
+    nu = np.fft.fftfreq(f.shape[0], 1.0)[:, None]
+    plo, phi = TIW_BAND['per']
+    if mode == 'band':
+        m = (np.abs(nu) >= 1 / phi) & (np.abs(nu) <= 1 / plo)
+        return np.fft.ifft(np.fft.fft(f, axis=0) * m, axis=0).real
+    m = np.abs(nu) <= 1 / phi                     # low: > 40 d
+    return np.fft.ifft(np.fft.fft(f, axis=0) * m, axis=0).real + mu
+
+
+def _rmse_in(m, o, box=None, mode='full'):
+    """RMSE of model-obs over a region. mode: 'full' (raw), 'band' (TIW 15-40 d),
+    'low' (> 40 d incl. mean) — the last two filter model and obs in time per gridpoint."""
+    if box:
+        sl = dict(YC=slice(*box['lat']), XC=slice(*box['lon']))
+        m = m.sel(**sl); o = o.sel(**sl)
+    mv, ov = m.values, o.values
+    if mode != 'full':
+        mv = _tfilter(mv.reshape(mv.shape[0], -1), mode)
+        ov = _tfilter(ov.reshape(ov.shape[0], -1), mode)
+    return float(np.sqrt(np.nanmean((mv - ov) ** 2)))
+
+
+def tiw_region_rmse():
+    """% RMSE reduction vs prior for SST/SSH at three scopes: whole domain, TIW box (total),
+    TIW box band-passed. Shows whether the skill gain is TIW-specific or domain-wide."""
+    runs = ['noVel', 'initialT', 'initialS', 'zonalWind', 'swdown', 'initialT_uwind',
+            'theta_salt', 'theta_salt_uwind', 'top4', 'Vel']
+    box = TIW_RMSE_BOX
+    fig, axs = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
+    for ax, field in zip(axs, ('sst', 'ssh')):
+        o = _gridded_obs_raw(field)
+        M = {r: xr.open_dataarray(f'{CACHE}/grid_{r}_{field}.nc') for r in ['prior'] + runs}
+        scopes = [('whole domain, total', dict()),
+                  (f'TIW box {box["lat"]}°N, total', dict(box=box)),
+                  (f'TIW box, band-passed {TIW_BAND["per"]} d', dict(box=box, mode='band'))]
+        x = np.arange(len(runs)); w = 0.27
+        for i, (lbl, kw) in enumerate(scopes):
+            rp = _rmse_in(M['prior'], o, **kw)
+            red = [100 * (rp - _rmse_in(M[r], o, **kw)) / rp for r in runs]
+            ax.bar(x + (i - 1) * w, red, w, label=lbl)
+        ax.set_xticks(x); ax.set_xticklabels([_run_label(r) for r in runs], rotation=90, fontsize=7)
+        ax.axhline(0, color='k', lw=.6); ax.grid(axis='y', alpha=.3); ax.legend(fontsize=7)
+        ax.set_title(f'{field.upper()}: % RMSE reduction vs prior')
+    axs[0].set_ylabel('% RMSE reduction vs prior')
+    fig.suptitle('TIW-region vs whole-domain RMSE reduction — separating overall skill from TIW improvement')
+    fig.tight_layout()
+    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    fig.savefig(f'{d}/tiw_region_rmse.png', dpi=140); plt.close(fig)
+
+
+def _tao_scale_rmse_red(var, runs, mode):
+    """% reduction vs prior of the scale-filtered RMSE (mode 'band'/'low') for a TAO
+    velocity component, aggregated over the 3 eq. moorings × obs-covered depths (0 to -250 m)."""
+    o = np.load(f'{CACHE}/obs_tao.npz')
+    lon, lat, day, depth = o['lon'], o['lat'], o['day'], o['depth']
+    obs_masked = np.where(o[f'w_{var}'] > 0, o[f'obs_{var}'], -9999.)
+    nt = tiw.NT; dsel = depth >= -250
+    mods = {r: np.load(f'{CACHE}/model_{r}_tao_{var}.npy') for r in ['prior'] + runs}
+    Oc, Mc = [], {r: [] for r in ['prior'] + runs}
+    for mlon in TAO_PA_MOORINGS:
+        sel = (np.abs(lon - mlon) < 0.6) & (np.abs(lat) < 0.6) & (day >= 0) & (day < nt)
+        od = _tao_daily(obs_masked, day, sel, nt)[:, dsel]
+        cov = np.isfinite(od).mean(0) >= 0.5
+        Oc.append(_tfilter(od[:, cov], mode))
+        for r in ['prior'] + runs:
+            Mc[r].append(_tfilter(_tao_daily(mods[r], day, sel, nt)[:, dsel][:, cov], mode))
+    zo = np.concatenate(Oc, axis=1)
+    rmse = lambda r: float(np.sqrt(np.nanmean((np.concatenate(Mc[r], axis=1) - zo) ** 2)))
+    rp = rmse('prior')
+    return [100 * (rp - rmse(r)) / rp for r in runs]
+
+
+# SST TIW-region boxes (lon = cold tongue); low-freq figure uses the full domain (box=None).
+SST_TIW_BOXES = {'2-6N': dict(lat=(2, 6), lon=(180, 270)),
+                 '2S-6N': dict(lat=(-2, 6), lon=(180, 270))}
+
+
+def tiw_scale_rmse_3d(mode, sst_box, scope_lbl, fname):
+    """Scale-filtered RMSE reduction vs prior in 3-D: SST + TAO U/V (equator, 0 to -250 m).
+    mode='band' (TIW 15-40 d) or 'low' (>40 d, large-scale); sst_box=None -> full domain."""
+    runs = ['noVel', 'initialT', 'initialS', 'zonalWind', 'swdown', 'initialT_uwind',
+            'theta_salt', 'theta_salt_uwind', 'top4', 'Vel']
+    x = np.arange(len(runs))
+    fig, axs = plt.subplots(1, 2, figsize=(16, 5), sharey=True)
+    o = _gridded_obs_raw('sst'); M = {r: xr.open_dataarray(f'{CACHE}/grid_{r}_sst.nc')
+                                      for r in ['prior'] + runs}
+    rp = _rmse_in(M['prior'], o, box=sst_box, mode=mode)
+    sst_red = [100 * (rp - _rmse_in(M[r], o, box=sst_box, mode=mode)) / rp for r in runs]
+    axs[0].bar(x, sst_red, color='tab:blue'); axs[0].set_title(f'SST — {scope_lbl}')
+    uU, uV = _tao_scale_rmse_red('U', runs, mode), _tao_scale_rmse_red('V', runs, mode)
+    w = 0.4
+    axs[1].bar(x - w / 2, uU, w, label='TAO U'); axs[1].bar(x + w / 2, uV, w, label='TAO V')
+    axs[1].set_title('TAO U/V — equatorial (0 to -250 m)'); axs[1].legend(fontsize=8)
+    for ax in axs:
+        ax.set_xticks(x); ax.set_xticklabels([_run_label(r) for r in runs], rotation=90, fontsize=7)
+        ax.axhline(0, color='k', lw=.6); ax.grid(axis='y', alpha=.3)
+    band_lbl = f'TIW band {TIW_BAND["per"]} d' if mode == 'band' else '> 40 d (large-scale)'
+    axs[0].set_ylabel('% RMSE reduction vs prior')
+    fig.suptitle(f'{band_lbl} RMSE reduction vs prior — SST ({scope_lbl}) + TAO U/V equatorial subsurface')
+    fig.tight_layout()
+    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    fig.savefig(f'{d}/{fname}', dpi=140); plt.close(fig)
 
 
 # ---- (2g) depth-resolved TIW phase/amp vs the TAO current meters ---------------
@@ -846,6 +971,11 @@ def controlling_phase_amp():
         tiw_skill_vs_obs(ch)
     tiw_tao_depth()                            # depth-resolved V vs the TAO current meters
     tiw_tao_skill()                            # per-run coherence/amp/lag bars vs TAO-V
+    tiw_region_rmse()                          # TIW-box vs domain RMSE reduction (SST/SSH)
+    tiw_scale_rmse_3d('band', SST_TIW_BOXES['2-6N'], '2-6°N box, TIW band', 'tiw_box_rmse_3d.png')
+    tiw_scale_rmse_3d('band', SST_TIW_BOXES['2S-6N'], '2°S-6°N box, TIW band',
+                      'tiw_box_rmse_3d_2S6N.png')
+    tiw_scale_rmse_3d('low', None, 'full domain, >40 d', 'tiw_lowfreq_rmse_3d.png')
     tiw_band_sensitivity()                     # long- vs short-wave phase skill vs obs
     # existing figures that already address the hypothesis (window phase/amp split,
     # space-time envelopes, the θ×u-wind TIW field, and the u-wind→EUC-shear evidence)
