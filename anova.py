@@ -629,6 +629,26 @@ def _run_label(r):
             'Vel': 'Full (Vel)'}.get(r) or tiw.CONTROL_XX.get(r, r)
 
 
+def _skill_bars(df, suptitle, fname, coh_title):
+    """Shared skill bar chart (coherence + amplitude ratio) over runs vs obs.
+    Lag dropped: the net lag is only meaningful once coherence is high (lag still in CSV)."""
+    x = np.arange(len(df))
+    colors = ['0.5' if r == 'prior' else 'tab:orange' if r == 'noVel'
+              else 'k' if r == 'Vel' else 'tab:blue' for r in df.run]
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4.8))
+    for ax, col, ttl, ref in [
+            (axs[0], 'coherence', coh_title, None),
+            (axs[1], 'amp_ratio', 'amplitude ratio to obs  (1 = obs)', 1.0)]:
+        ax.bar(x, df[col], color=colors)
+        if ref is not None:
+            ax.axhline(ref, color='k', ls='--', lw=1)
+        ax.set_xticks(x); ax.set_xticklabels(df.label, rotation=90, fontsize=7)
+        ax.set_title(ttl); ax.grid(axis='y', alpha=.3)
+    fig.suptitle(suptitle); fig.tight_layout()
+    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    fig.savefig(f'{d}/{fname}', dpi=140); plt.close(fig)
+
+
 def tiw_skill_vs_obs(channel):
     """Each run's TIW skill vs the band-passed OBSERVED field (SST=mw_fusion, SSH=RADS):
     coherence (complex pattern+phase match, 0-1), amplitude ratio ||z_run||/||z_obs||, and
@@ -648,24 +668,45 @@ def tiw_skill_vs_obs(channel):
     df = pd.DataFrame(rows)
     d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
     df.to_csv(f'{d}/tiw_{channel}_skill_vs_obs.csv', index=False)
-    x = np.arange(len(df))
-    colors = ['0.5' if r == 'prior' else 'tab:orange' if r == 'noVel'
-              else 'k' if r == 'Vel' else 'tab:blue' for r in df.run]
-    fig, axs = plt.subplots(1, 3, figsize=(16, 4.8))
-    for ax, col, ttl, ref in [
-            (axs[0], 'coherence', 'coherence with obs TIW  [0–1]', None),
-            (axs[1], 'amp_ratio', 'amplitude ratio to obs  (1 = obs)', 1.0),
-            (axs[2], 'lag_days', f'phase lag vs obs (days; Tdom={Tdom:.1f})', 0.0)]:
-        ax.bar(x, df[col], color=colors)
-        if ref is not None:
-            ax.axhline(ref, color='k', ls='--', lw=1)
-        ax.set_xticks(x); ax.set_xticklabels(df.label, rotation=90, fontsize=7)
-        ax.set_title(ttl); ax.grid(axis='y', alpha=.3)
     src = 'mw_fusion SST' if channel == 'SST' else 'RADS SSH'
-    fig.suptitle(f'TIW {channel} skill vs band-passed OBSERVATIONS ({src}; '
-                 f'band {TIW_BAND["per"]} d / {TIW_BAND["wav"]} km, region {TIW_REGION}°E)')
-    fig.tight_layout()
-    fig.savefig(f'{d}/tiw_{channel}_skill_vs_obs.png', dpi=140); plt.close(fig)
+    _skill_bars(df, f'TIW {channel} skill vs band-passed OBSERVATIONS ({src}; '
+                f'band {TIW_BAND["per"]} d / {TIW_BAND["wav"]} km, region {TIW_REGION}°E)',
+                f'tiw_{channel}_skill_vs_obs.png', f'coherence with {channel} obs TIW  [0–1]')
+    return df
+
+
+def tiw_tao_skill():
+    """Per-run TIW-V coherence / amplitude-ratio / lag vs the TAO current meters, aggregated
+    over the 3 equatorial moorings and depth (0 to -250 m): bar-chart analog of
+    tiw_skill_vs_obs but for the velocity observations (single-point, temporal band only)."""
+    o = np.load(f'{CACHE}/obs_tao.npz')
+    lon, lat, day, depth = o['lon'], o['lat'], o['day'], o['depth']
+    obs_masked = np.where(o['w_V'] > 0, o['obs_V'], -9999.)
+    nt = tiw.NT; dsel = depth >= -250
+    runs = [r for r in VS_OBS_RUNS if os.path.exists(f'{CACHE}/model_{r}_tao_V.npy')]
+    Ocols, Mcols = [], {r: [] for r in runs}
+    for mlon in TAO_PA_MOORINGS:
+        sel = (np.abs(lon - mlon) < 0.6) & (np.abs(lat) < 0.6) & (day >= 0) & (day < nt)
+        od = _tao_daily(obs_masked, day, sel, nt)[:, dsel]
+        cov = np.isfinite(od).mean(0) >= 0.5                  # keep depths with real obs
+        Ocols.append(_bandpass_time(od[:, cov]))
+        for r in runs:
+            md = _tao_daily(np.load(f'{CACHE}/model_{r}_tao_V.npy'), day, sel, nt)[:, dsel][:, cov]
+            Mcols[r].append(_bandpass_time(md))
+    zo = np.concatenate(Ocols, axis=1); Tdom = _period_days(zo)
+    o_all = zo.ravel(); no = np.linalg.norm(o_all)
+    rows = []
+    for r in runs:
+        z = np.concatenate(Mcols[r], axis=1).ravel()
+        c = np.vdot(o_all, z)
+        rows.append(dict(run=r, label=_run_label(r), coherence=abs(c) / (no * np.linalg.norm(z)),
+                         amp_ratio=np.linalg.norm(z) / no, lag_days=np.angle(c) / (2 * np.pi) * Tdom))
+    df = pd.DataFrame(rows)
+    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    df.to_csv(f'{d}/tiw_tao_skill_vs_obs.csv', index=False)
+    _skill_bars(df, 'TIW-V skill vs TAO current meters (3 eq. moorings, 0 to -250 m '
+                f'aggregated; temporal band {TIW_BAND["per"]} d)',
+                'tiw_tao_skill_vs_obs.png', 'coherence with TAO-V TIW  [0–1]')
     return df
 
 
@@ -804,6 +845,7 @@ def controlling_phase_amp():
         tiw_pa_timeseries(ch, ref='obs')
         tiw_skill_vs_obs(ch)
     tiw_tao_depth()                            # depth-resolved V vs the TAO current meters
+    tiw_tao_skill()                            # per-run coherence/amp/lag bars vs TAO-V
     tiw_band_sensitivity()                     # long- vs short-wave phase skill vs obs
     # existing figures that already address the hypothesis (window phase/amp split,
     # space-time envelopes, the θ×u-wind TIW field, and the u-wind→EUC-shear evidence)
