@@ -14,6 +14,7 @@ import xarray as xr
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import tiw
 
 HERE = os.path.dirname(__file__)
@@ -23,10 +24,18 @@ FIGS = f'{HERE}/figs'            # figures stay in the repo (deliverables)
 # fixed context runs (same in every experiment)
 FIX_LABEL = {'prior': 'prior (no DA)', 'noVel': 'TPOSE6-noVel', 'Vel': 'TPOSE6-Vel (full)'}
 FIX_COLOR = {'prior': '0.5', 'noVel': 'tab:orange', 'Vel': 'tab:blue'}
+# highlight for the single-control run in fig1(b)/fig2: distinct from the
+# prior gray and noVel/Vel blues (CTRL_COLOR slategray/darkgray/tab:blue collide).
+CTRL_HILITE = 'tab:green'
 CTRL_COLOR = {'initialT': 'tab:green', 'initialS': 'tab:red', 'zonalWind': 'tab:purple',
               'meridionalWind': 'tab:brown', 'swdown': 'tab:olive',
               'atmosT': 'tab:cyan', 'atmosQ': 'tab:pink', 'lwdown': 'gold',
-              'precip': 'tab:blue', 'uvel': 'darkgray', 'vvel': 'slategray'}
+              'precip': 'tab:blue', 'uvel': 'darkgray', 'vvel': 'slategray',
+              'initialT_uwind': CTRL_HILITE, 'theta_salt': CTRL_HILITE,
+              'theta_salt_uwind': CTRL_HILITE, 'top4': CTRL_HILITE}
+# multi-control combo runs to also render as per-experiment figures (figs 1-5;
+# fig6 needs raw run output and is skipped). Compares each combo against full Vel.
+COMBO_EXPERIMENTS = ['initialT_uwind', 'theta_salt', 'theta_salt_uwind', 'top4']
 # all single-control runs, kept + null, ordered for the summary ranking figure.
 ALL_CONTROLS = tiw.CONTROLS + tiw.CONTROLS_NULL
 
@@ -50,6 +59,17 @@ def label_of(run, control):
 
 def color_of(run, control):
     return FIX_COLOR.get(run) or CTRL_COLOR[control]
+
+
+def line_color(run, control):
+    """Like color_of, but the single-control run gets the fig1(b) highlight
+    (used in fig2/fig3 so its line is distinct from the prior/noVel/Vel)."""
+    return CTRL_HILITE if run == control else color_of(run, control)
+
+
+def line_kw(run):
+    """Markers on the prior line so it stays visible when another run overlaps it."""
+    return dict(marker='o', markersize=3, markevery=6) if run == 'prior' else {}
 
 
 def _metrics():
@@ -91,18 +111,21 @@ def fig_headline(control, outdir):
     ax[0].set_title(f'(a) {xx}-only RMSE improvement vs prior (iter0) & noVel')
     ax[0].legend(fontsize=8, loc='upper right')
 
-    # (b) RMSE relative to prior (iter0)
-    x = np.arange(len(prods)); w = 0.2
-    runs = order_of(control)
+    # (b) RMSE relative to baseline. Prior bar omitted (it is 1 by construction).
+    #     Control bar gets a fixed highlight color so it reads clearly against the
+    #     noVel/Vel blues rather than CTRL_COLOR (slategray/darkgray/tab:blue collide).
+    x = np.arange(len(prods)); w = 0.25
+    runs = ['noVel', control, 'Vel']
+    bcolor = {'noVel': FIX_COLOR['noVel'], control: CTRL_HILITE, 'Vel': FIX_COLOR['Vel']}
     for i, run in enumerate(runs):
         vals = [r.loc[k, run] / r.loc[k, _baseline(r, k)] if run in r.columns else np.nan
                 for k, _, _ in prods]
-        ax[1].bar(x + (i - 1.5) * w, vals, w, label=label_of(run, control), color=color_of(run, control))
+        ax[1].bar(x + (i - 1.0) * w, vals, w, label=label_of(run, control), color=bcolor[run])
     ax[1].set_xticks(x); ax[1].set_xticklabels([p[1] for p in prods])
     ax[1].axhline(1, color='k', lw=.8, ls=':'); ax[1].set_ylim(0, 1.3)
     ax[1].set_ylabel('RMSE / prior (iter0) RMSE')
     ax[1].set_title('(b) Relative misfit by run')
-    ax[1].legend(fontsize=7, loc='upper center', ncol=4)
+    ax[1].legend(fontsize=7, loc='upper center', ncol=3)
     fig.tight_layout(); fig.savefig(f'{outdir}/fig1_headline.png', dpi=140); plt.close(fig)
 
 
@@ -116,7 +139,8 @@ def fig_depth(control, outdir):
             fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
             if os.path.exists(fp):
                 ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
-                        color=color_of(run, control), label=label_of(run, control))
+                        color=line_color(run, control), label=label_of(run, control),
+                        **line_kw(run))
         ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('RMSE'); ax.grid(alpha=.3)
         ax.legend(fontsize=7, loc='lower right')
     axs[0].set_ylabel('depth (m)'); axs[0].set_ylim(-500, 0)
@@ -146,7 +170,8 @@ def fig_time(control, outdir):
                 fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
                 if os.path.exists(fp):
                     ax.plot(tiw.DAYS, _daily_rmse_profile(o, np.load(fp), w, day),
-                            color=color_of(run, control), label=label_of(run, control))
+                            color=line_color(run, control), label=label_of(run, control),
+                            **line_kw(run))
             ax.set_title(f'{prod.upper()} {var}')
         else:
             obs_grid = _gridded_obs(prod)
@@ -155,7 +180,8 @@ def fig_time(control, outdir):
                 if os.path.exists(fp):
                     d = xr.open_dataarray(fp).values - obs_grid
                     ax.plot(tiw.DAYS, np.sqrt(np.nanmean(d.reshape(tiw.NT, -1) ** 2, axis=1)),
-                            color=color_of(run, control), label=label_of(run, control))
+                            color=line_color(run, control), label=label_of(run, control),
+                            **line_kw(run))
             ax.set_title(prod.upper())
         ax.grid(alpha=.3)
         if ax.get_legend_handles_labels()[0]:
@@ -193,11 +219,12 @@ def fig_euc(control, outdir):
         for m in models.values():
             valid &= ~np.isnan(m[sel])
         omean = np.nanmean(np.where(valid, o[sel], np.nan), axis=0)
-        ax.plot(omean, depth, 'k', lw=2, label='TAO (model-matched)')
+        ax.plot(omean, depth, 'k', lw=2, label='TAO')
         stats.append(('TAO', name, *_euc(omean, depth)))
         for run, m in models.items():
             mmean = np.nanmean(np.where(valid, m[sel], np.nan), axis=0)
-            ax.plot(mmean, depth, color=color_of(run, control), label=label_of(run, control))
+            ax.plot(mmean, depth, color=line_color(run, control), label=label_of(run, control),
+                    **line_kw(run))
             stats.append((run, name, *_euc(mmean, depth)))
         ax.set_title(f'EUC at {name}'); ax.set_xlabel('U (m/s)'); ax.grid(alpha=.3)
         ax.axvline(0, color='0.7', lw=.8)
@@ -229,6 +256,11 @@ def _rmse_map(prod, run, obs_grid):
     return np.sqrt(np.nanmean((m - obs_grid) ** 2, axis=0))
 
 
+# fixed fig5 map limits so every experiment is on the same scale:
+# (left RMSE 0..rmax, middle+right RMSE-reduction +/-dmax).
+MAP_LIMS = {'sst': (0.2, 0.2), 'ssh': (0.02, 0.015)}
+
+
 def fig_maps(control, outdir):
     ref = xr.open_dataarray(f'{CACHE}/grid_Vel_sst.nc')
     XC, YC = ref.XC.values, ref.YC.values
@@ -237,20 +269,21 @@ def fig_maps(control, outdir):
         if not (os.path.exists(f'{CACHE}/grid_{base}_{prod}.nc')
                 and os.path.exists(f'{CACHE}/grid_{control}_{prod}.nc')):
             continue
+        rmax, dmax = MAP_LIMS[prod]
         obs_grid = _gridded_obs(prod)
         rb = _rmse_map(prod, base, obs_grid)
-        fig, axs = plt.subplots(1, 3, figsize=(16, 3.6))
-        axs[0].pcolormesh(XC, YC, rb, vmin=0, vmax=np.nanpercentile(rb, 95), cmap='viridis')
+        fig, axs = plt.subplots(1, 3, figsize=(16, 3.6), constrained_layout=True)
+        pc0 = axs[0].pcolormesh(XC, YC, rb, vmin=0, vmax=rmax, cmap='viridis')
         axs[0].set_title(f'{prod.upper()} RMSE: {label_of(base, control)}')
+        fig.colorbar(pc0, ax=axs[0], shrink=.8)
         for ax, run in zip(axs[1:], (control, 'Vel')):
             red = rb - _rmse_map(prod, run, obs_grid)       # +ve = improvement
-            lim = np.nanpercentile(np.abs(red), 95)
-            pc = ax.pcolormesh(XC, YC, red, vmin=-lim, vmax=lim, cmap='RdBu_r')
+            pc = ax.pcolormesh(XC, YC, red, vmin=-dmax, vmax=dmax, cmap='RdBu_r')
             ax.set_title(f'RMSE reduction: {label_of(base, control)}→{label_of(run, control)}')
-            fig.colorbar(pc, ax=ax, shrink=.8)
+        fig.colorbar(pc, ax=list(axs[1:]), shrink=.8)        # shared across both panels
         for ax in axs:
             ax.set_xlabel('lon'); ax.set_ylabel('lat')
-        fig.tight_layout(); fig.savefig(f'{outdir}/fig5_{prod}_maps.png', dpi=140); plt.close(fig)
+        fig.savefig(f'{outdir}/fig5_{prod}_maps.png', dpi=140); plt.close(fig)
 
 
 # ---- Fig 6: the applied control / its model fingerprint (per experiment) ----
@@ -284,16 +317,20 @@ def fig_control(control, outdir):
 
     fig, axs = plt.subplots(1, 2, figsize=(14, 4.2))
     rms = np.sqrt(np.nanmean(arr ** 2, axis=0))
-    pc = axs[0].pcolormesh(X, Y, rms, vmin=0,
-                           vmax=np.nanpercentile(rms[np.isfinite(rms)], 99), cmap='magma')
+    vmax = np.nanpercentile(rms[np.isfinite(rms)], 99)
+    pc = axs[0].contourf(X, Y, rms, levels=np.linspace(0, vmax, 101),
+                         cmap='magma', extend='max')
+    cb = fig.colorbar(pc, ax=axs[0], shrink=.8); cb.locator = MaxNLocator(6); cb.update_ticks()
     axs[0].set_title(f'{xx}: {desc} ({unit}), depth-RMS')
-    axs[0].set_xlabel('lon'); axs[0].set_ylabel('lat'); fig.colorbar(pc, ax=axs[0], shrink=.8)
+    axs[0].set_xlabel('lon'); axs[0].set_ylabel('lat')
 
     sec = arr[:, np.argmin(np.abs(Y)), :]
     lim = np.nanpercentile(np.abs(sec[np.isfinite(sec)]), 99)
-    pc = axs[1].pcolormesh(X, Z, sec, vmin=-lim, vmax=lim, cmap='RdBu_r')
+    pc = axs[1].contourf(X, Z, sec, levels=np.linspace(-lim, lim, 101),
+                         cmap='RdBu_r', extend='both')
+    cb = fig.colorbar(pc, ax=axs[1], shrink=.8); cb.locator = MaxNLocator(6); cb.update_ticks()
     axs[1].set_ylim(-400, 0); axs[1].set_title(f'{xx}: {desc} ({unit}), equatorial section')
-    axs[1].set_xlabel('lon'); axs[1].set_ylabel('depth (m)'); fig.colorbar(pc, ax=axs[1], shrink=.8)
+    axs[1].set_xlabel('lon'); axs[1].set_ylabel('depth (m)')
     fig.tight_layout(); fig.savefig(f'{outdir}/fig6_control_{var}.png', dpi=140); plt.close(fig)
 
 
@@ -409,9 +446,96 @@ def fig_decomp_depth(controls, outdir):
         ax.axvline(0, color='0.8', lw=.8)
         ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('mean increment'); ax.grid(alpha=.3)
     axs[0].set_ylabel('depth (m)'); axs[0].set_ylim(-500, 0)
-    axs[-1].legend(fontsize=7, loc='lower right')
+    h, l = axs[-1].get_legend_handles_labels()
+    fig.legend(h, l, fontsize=7, loc='center left', bbox_to_anchor=(1.0, 0.5))
     fig.suptitle('Increment decomposition by depth (mean model change from prior)')
-    fig.tight_layout(); fig.savefig(f'{outdir}/decomp_depth.png', dpi=140); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(f'{outdir}/decomp_depth.png', dpi=140, bbox_inches='tight'); plt.close(fig)
+
+
+# depth-resolved RMSE vs obs for the θ/S/u-wind single controls and their combos,
+# with prior and full (Vel) as references: which combination's profile is closest to full.
+# (run, color, explicit-label-or-None, extra plot kwargs)
+DECOMP_PROFILE_RUNS = [
+    ('prior',            '0.5',        'prior (no DA)', dict(marker='o', markersize=3, markevery=6)),
+    ('initialT',         'tab:green',  None,            {}),
+    ('initialS',         'tab:red',    None,            {}),
+    ('zonalWind',        'tab:purple', None,            {}),
+    ('theta_salt',       'tab:orange', None,            {}),
+    ('initialT_uwind',   'tab:brown',  None,            {}),
+    ('theta_salt_uwind', 'tab:cyan',   None,            {}),
+    ('Vel',              'k',          'Full (TPOSE6-Vel)', dict(lw=1.5)),
+]
+
+
+def fig_decomp_rmse_profiles(outdir):
+    fig, axs = plt.subplots(1, 4, figsize=(15, 5), sharey=True)
+    for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
+        obs = np.load(f'{CACHE}/obs_{prod}.npz')
+        depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
+        for run, color, lbl, kw in DECOMP_PROFILE_RUNS:
+            fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
+            if not os.path.exists(fp):
+                continue
+            style = dict(lw=1.3); style.update(kw)
+            ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
+                    color=color, label=lbl or tiw.CONTROL_XX[run], **style)
+        ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('RMSE'); ax.grid(alpha=.3)
+    axs[0].set_ylabel('depth (m)'); axs[0].set_ylim(-500, 0)
+    axs[0].legend(fontsize=7, loc='lower right')
+    fig.suptitle('Depth-resolved RMSE vs obs: single controls & combos vs full solution')
+    fig.tight_layout(); fig.savefig(f'{outdir}/decomp_rmse_profiles.png', dpi=140); plt.close(fig)
+
+
+# fig3-style misfit-evolution overlay: profile runs plus xx_swdown and the 4-way top4.
+DECOMP_TIME_RUNS = [
+    ('prior',            '0.5',        'prior (no DA)', dict(marker='o', markersize=3, markevery=8)),
+    ('initialT',         'tab:green',  None,            {}),
+    ('initialS',         'tab:red',    None,            {}),
+    ('zonalWind',        'tab:purple', None,            {}),
+    ('swdown',           'tab:olive',  None,            {}),
+    ('theta_salt',       'tab:orange', None,            {}),
+    ('initialT_uwind',   'tab:brown',  None,            {}),
+    ('theta_salt_uwind', 'tab:cyan',   None,            {}),
+    ('top4',             'magenta',    None,            {}),
+    ('Vel',              'k',          'Full (TPOSE6-Vel)', dict(lw=1.5)),
+]
+
+
+def fig_decomp_time(outdir):
+    fig, axs = plt.subplots(3, 2, figsize=(13, 9), sharex=True)
+    panels = [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V'), ('sst', None), ('ssh', None)]
+    for ax, (prod, var) in zip(axs.ravel(), panels):
+        if var is not None:
+            obs = np.load(f'{CACHE}/obs_{prod}.npz')
+            o = obs[f'obs_{var}']; w = obs[f'w_{var}']; day = obs['day']
+            for run, color, lbl, kw in DECOMP_TIME_RUNS:
+                fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
+                if not os.path.exists(fp):
+                    continue
+                style = dict(lw=1.3); style.update(kw)
+                ax.plot(tiw.DAYS, _daily_rmse_profile(o, np.load(fp), w, day),
+                        color=color, label=lbl or tiw.CONTROL_XX[run], **style)
+            ax.set_title(f'{prod.upper()} {var}')
+        else:
+            obs_grid = _gridded_obs(prod)
+            for run, color, lbl, kw in DECOMP_TIME_RUNS:
+                fp = f'{CACHE}/grid_{run}_{prod}.nc'
+                if not os.path.exists(fp):
+                    continue
+                style = dict(lw=1.3); style.update(kw)
+                d = xr.open_dataarray(fp).values - obs_grid
+                ax.plot(tiw.DAYS, np.sqrt(np.nanmean(d.reshape(tiw.NT, -1) ** 2, axis=1)),
+                        color=color, label=lbl or tiw.CONTROL_XX[run], **style)
+            ax.set_title(prod.upper())
+        ax.grid(alpha=.3); ax.tick_params(axis='x', rotation=30)
+    for ax in axs[:, 0]:
+        ax.set_ylabel('RMSE')
+    h, l = axs[0, 0].get_legend_handles_labels()
+    fig.legend(h, l, fontsize=8, loc='center left', bbox_to_anchor=(1.0, 0.5))
+    fig.suptitle('Misfit evolution: single controls & combos vs full solution')
+    fig.tight_layout()
+    fig.savefig(f'{outdir}/decomp_time.png', dpi=140, bbox_inches='tight'); plt.close(fig)
 
 
 def fig_decomp_maps(controls, outdir):
@@ -491,6 +615,18 @@ if __name__ == '__main__':
             except Exception as e:
                 print(f'[{c}] {fn.__name__} FAILED: {type(e).__name__}: {e}')
         print(f'[{c}] done -> {d}')
+    # combo runs: same per-experiment figs (figs 1-5), each vs full Vel. fig_control
+    # skipped (needs raw run output; not required here).
+    for c in COMBO_EXPERIMENTS:
+        if not os.path.exists(f'{CACHE}/model_{c}_argo_T.npy'):
+            print(f'[{c}] skipped (no cached metrics)'); continue
+        d = f'{FIGS}/{c}'; os.makedirs(d, exist_ok=True)
+        for fn in (fig_headline, fig_depth, fig_time, fig_euc, fig_maps):
+            try:
+                fn(c, d)
+            except Exception as e:
+                print(f'[{c}] {fn.__name__} FAILED: {type(e).__name__}: {e}')
+        print(f'[{c}] done -> {d}')
     di = f'{FIGS}/intercomparison'; os.makedirs(di, exist_ok=True)
     for fn in (fig_intercomp_bars, fig_intercomp_depth):
         try:
@@ -505,6 +641,11 @@ if __name__ == '__main__':
     for fn in (fig_decomp_bars, fig_decomp_depth, fig_decomp_maps):
         try:
             fn(kept, dd)
+        except Exception as e:
+            print(f'[decomp] {fn.__name__} FAILED: {type(e).__name__}: {e}')
+    for fn in (fig_decomp_rmse_profiles, fig_decomp_time):
+        try:
+            fn(dd)
         except Exception as e:
             print(f'[decomp] {fn.__name__} FAILED: {type(e).__name__}: {e}')
     print(f'[decomp] done -> {dd}')

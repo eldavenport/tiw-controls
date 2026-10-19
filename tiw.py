@@ -87,7 +87,10 @@ CONTROLS_NULL = ['uvel', 'vvel']
 CONTROL_XX = {'initialT': 'xx_theta', 'initialS': 'xx_salt', 'zonalWind': 'xx_uwind',
               'meridionalWind': 'xx_vwind', 'swdown': 'xx_swdown',
               'atmosT': 'xx_atemp', 'atmosQ': 'xx_aqh', 'lwdown': 'xx_lwdown',
-              'precip': 'xx_precip', 'uvel': 'xx_uvel', 'vvel': 'xx_vvel'}
+              'precip': 'xx_precip', 'uvel': 'xx_uvel', 'vvel': 'xx_vvel',
+              # multi-control combos (for per-experiment figures of combined runs)
+              'initialT_uwind': 'θ+u wind', 'theta_salt': 'θ+S',
+              'theta_salt_uwind': 'θ+S+u wind', 'top4': 'θ+S+u wind+sw'}
 
 # model field name + its horizontal grid coords, per obs variable
 FIELD = {
