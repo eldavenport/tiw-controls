@@ -7,6 +7,7 @@ Reads tiw.CACHE (from compute_metrics.py) + metrics.csv.
 
 Run:  ~/miniforge3/envs/tpose/bin/python make_figures.py
 """
+import glob
 import os
 import numpy as np
 import pandas as pd
@@ -19,7 +20,11 @@ import tiw
 
 HERE = os.path.dirname(__file__)
 CACHE = tiw.CACHE                 # intermediate data on /data
-FIGS = f'{HERE}/figs'            # figures stay in the repo (deliverables)
+# Per-experiment figures go under the solution family (TIW_FAMILY=vel|novel), matching
+# anova.py, so noVel experiment figs land in figs/novel/<control>/ not on top of the Vel set.
+FAMILY = os.environ.get('TIW_FAMILY', 'vel')
+ANCHOR = {'vel': 'Vel', 'novel': 'noVel'}[FAMILY]   # family's full-solution run (d_full anchor)
+FIGS = f'{HERE}/figs/{FAMILY}'   # figures stay in the repo (deliverables)
 
 # fixed context runs (same in every experiment)
 FIX_LABEL = {'prior': 'prior (no DA)', 'noVel': 'TPOSE6-noVel', 'Vel': 'TPOSE6-Vel (full)'}
@@ -32,12 +37,24 @@ CTRL_COLOR = {'initialT': 'tab:green', 'initialS': 'tab:red', 'zonalWind': 'tab:
               'atmosT': 'tab:cyan', 'atmosQ': 'tab:pink', 'lwdown': 'gold',
               'precip': 'teal', 'uvel': 'darkgray', 'vvel': 'slategray',
               'initialT_uwind': CTRL_HILITE, 'theta_salt': CTRL_HILITE,
-              'theta_salt_uwind': CTRL_HILITE, 'top4': CTRL_HILITE}
+              'theta_salt_uwind': CTRL_HILITE, 'top4': CTRL_HILITE,
+              # noVel-family singles reuse their Vel-counterpart colors
+              'nv_initialT': 'tab:green', 'nv_initialS': 'tab:red',
+              'nv_zonalWind': 'tab:purple', 'nv_swdown': 'tab:olive',
+              'nv_atmosT': 'tab:cyan', 'nv_atmosQ': 'tab:pink',
+              'nv_precip': 'teal', 'nv_meridionalWind': 'tab:brown', 'nv_lwdown': 'gold',
+              'nv_theta_salt': CTRL_HILITE, 'nv_initialT_uwind': CTRL_HILITE,
+              'nv_theta_salt_uwind': CTRL_HILITE, 'nv_top4': CTRL_HILITE}
 # multi-control combo runs to also render as per-experiment figures (figs 1-5;
-# fig6 needs raw run output and is skipped). Compares each combo against full Vel.
-COMBO_EXPERIMENTS = ['initialT_uwind', 'theta_salt', 'theta_salt_uwind', 'top4']
-# all single-control runs, kept + null, ordered for the summary ranking figure.
-ALL_CONTROLS = tiw.CONTROLS + tiw.CONTROLS_NULL
+# fig6 needs raw run output and is skipped). Compares each combo against the anchor.
+# noVel is 'singles first' -> 4 single controls, no combos yet.
+NOVEL_SINGLES = ['nv_initialT', 'nv_initialS', 'nv_zonalWind', 'nv_swdown',
+                 'nv_atmosT', 'nv_atmosQ', 'nv_precip', 'nv_meridionalWind', 'nv_lwdown']
+COMBO_EXPERIMENTS = (['nv_theta_salt', 'nv_initialT_uwind', 'nv_theta_salt_uwind', 'nv_top4']
+                     if FAMILY == 'novel' else
+                     ['initialT_uwind', 'theta_salt', 'theta_salt_uwind', 'top4'])
+# all single-control runs, ordered for the summary ranking figure.
+ALL_CONTROLS = NOVEL_SINGLES if FAMILY == 'novel' else tiw.CONTROLS + tiw.CONTROLS_NULL
 
 PRODS = [('argo_T', 'Argo T', '°C'), ('argo_S', 'Argo S', 'psu'),
          ('tao_U', 'TAO U', 'm/s'), ('tao_V', 'TAO V', 'm/s'),
@@ -54,7 +71,7 @@ def order_of(control):
 
 
 def label_of(run, control):
-    return FIX_LABEL.get(run) or f'TPOSE6-Vel ({tiw.CONTROL_XX[control]})'
+    return FIX_LABEL.get(run) or f'{FIX_LABEL[ANCHOR]} ({tiw.CONTROL_XX[control]})'
 
 
 def color_of(run, control):
@@ -178,7 +195,7 @@ def fig_time(control, outdir):
             for run in order_of(control):
                 fp = f'{CACHE}/grid_{run}_{prod}.nc'
                 if os.path.exists(fp):
-                    d = xr.open_dataarray(fp).values - obs_grid
+                    d = _grid_vals(run, prod) - obs_grid
                     ax.plot(tiw.DAYS, np.sqrt(np.nanmean(d.reshape(tiw.NT, -1) ** 2, axis=1)),
                             color=line_color(run, control), label=label_of(run, control),
                             **line_kw(run))
@@ -251,8 +268,15 @@ def _gridded_obs(prod):
     return np.nanmean(np.stack(arrs), axis=0)
 
 
+def _grid_vals(run, prod):
+    """Grid (time,YC,XC) as ndarray, reindexed to the canonical 122-day axis so a run
+    missing a day (nv_initialT_uwind=121) stays aligned for cross-run/obs arithmetic."""
+    da = xr.open_dataarray(f'{CACHE}/grid_{run}_{prod}.nc')
+    return (da.reindex(time=tiw.DAYS) if 'time' in da.dims else da).values
+
+
 def _rmse_map(prod, run, obs_grid):
-    m = xr.open_dataarray(f'{CACHE}/grid_{run}_{prod}.nc').values
+    m = _grid_vals(run, prod)
     return np.sqrt(np.nanmean((m - obs_grid) ** 2, axis=0))
 
 
@@ -302,10 +326,24 @@ _FINGERPRINT = {
     'precip':         ('SALT', -1,  'cumulative S response (day 121)', 'psu'),
     'uvel':           ('UVEL', 0,   'initial-U increment', 'm/s'),
     'vvel':           ('VVEL', 0,   'initial-V increment', 'm/s'),
+    # noVel-family singles (same fingerprint as their Vel counterpart)
+    'nv_initialT':    ('THETA', 0,  'initial-T increment', '°C'),
+    'nv_initialS':    ('SALT',  0,  'initial-S increment', 'psu'),
+    'nv_zonalWind':   ('UVEL', -1,  'cumulative U response (day 121)', 'm/s'),
+    'nv_swdown':      ('THETA', -1, 'cumulative T response (day 121)', '°C'),
+    'nv_atmosT':         ('THETA', -1, 'cumulative T response (day 121)', '°C'),
+    'nv_atmosQ':         ('THETA', -1, 'cumulative T response (day 121)', '°C'),
+    'nv_precip':         ('SALT', -1,  'cumulative S response (day 121)', 'psu'),
+    'nv_meridionalWind': ('VVEL', -1,  'cumulative V response (day 121)', 'm/s'),
+    'nv_lwdown':         ('THETA', -1, 'cumulative T response (day 121)', '°C'),
 }
 
 
 def fig_control(control, outdir):
+    # fig6 needs raw diag_state; many experiment runs are purged after euctiw caching.
+    if not glob.glob(f'{tiw.RUNS[control][0]}/diag_state.*.data'):
+        raise FileNotFoundError(f'{control}: diag_state purged; fig6 not regenerable '
+                                f'(existing fig6 retained)')
     var, t, desc, unit = _FINGERPRINT[control]
     run = tiw.load_run(control); pr = tiw.load_run('prior')
     d = (run[var].isel(time=t) - pr[var].isel(time=t)).where(tiw.wet_mask(run, run[var]))
@@ -390,11 +428,11 @@ def fig_intercomp_depth(controls, outdir):
 def _incr_vectors(prodkey, controls):
     base = 'prior'
     if prodkey in ('sst', 'ssh'):
-        load = lambda r: xr.open_dataarray(f'{CACHE}/grid_{r}_{prodkey}.nc').values
+        load = lambda r: _grid_vals(r, prodkey)
     else:
         p, var = prodkey.split('_')
         load = lambda r: np.load(f'{CACHE}/model_{r}_{p}_{var}.npy')
-    mp, mv = load(base), load('Vel')
+    mp, mv = load(base), load(ANCHOR)
     mc = {c: load(c) for c in controls}
     v = np.isfinite(mp) & np.isfinite(mv)
     for c in controls:
@@ -403,8 +441,8 @@ def _incr_vectors(prodkey, controls):
 
 
 def fig_decomp_bars(controls, outdir):
-    prods = [p for p in PRODS if os.path.exists(f'{CACHE}/grid_Vel_{p[0]}.nc')
-             or os.path.exists(f"{CACHE}/model_Vel_{p[0].replace('_','_')}.npy")]
+    prods = [p for p in PRODS if os.path.exists(f'{CACHE}/grid_{ANCHOR}_{p[0]}.nc')
+             or os.path.exists(f"{CACHE}/model_{ANCHOR}_{p[0].replace('_','_')}.npy")]
     x = np.arange(len(prods)); w = 0.8 / (len(controls) + 1)
     fig, ax = plt.subplots(figsize=(13, 5))
     shares = {}
@@ -432,7 +470,7 @@ def fig_decomp_depth(controls, outdir):
     fig, axs = plt.subplots(1, 4, figsize=(15, 5), sharey=True)
     for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
         L = lambda r: np.load(f'{CACHE}/model_{r}_{prod}_{var}.npy')
-        mp, mv = L('prior'), L('Vel'); mc = {c: L(c) for c in controls}
+        mp, mv = L('prior'), L(ANCHOR); mc = {c: L(c) for c in controls}
         obs = np.load(f'{CACHE}/obs_{prod}.npz'); depth = obs['depth']
         valid = np.isfinite(mp) & np.isfinite(mv)
         for c in controls:
@@ -441,7 +479,7 @@ def fig_decomp_depth(controls, outdir):
         dfull = prof(mv - mp); dsum = sum(prof(mc[c] - mp) for c in controls)
         for c in controls:
             ax.plot(prof(mc[c] - mp), depth, color=CTRL_COLOR[c], lw=1.3, label=tiw.CONTROL_XX[c])
-        ax.plot(dfull, depth, 'k', lw=2, label='full (Vel−prior)')
+        ax.plot(dfull, depth, 'k', lw=2, label=f'full ({ANCHOR}−prior)')
         ax.plot(dsum, depth, '0.5', lw=1.5, ls='--', label='Σ single controls')
         ax.axvline(0, color='0.8', lw=.8)
         ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('mean increment'); ax.grid(alpha=.3)
@@ -543,13 +581,12 @@ def fig_decomp_maps(controls, outdir):
         base = 'prior'
         if not os.path.exists(f'{CACHE}/grid_{base}_{prod}.nc'):
             continue
-        ref = xr.open_dataarray(f'{CACHE}/grid_Vel_{prod}.nc')
+        ref = xr.open_dataarray(f'{CACHE}/grid_{ANCHOR}_{prod}.nc')
         XC, YC = ref.XC.values, ref.YC.values
-        gb = xr.open_dataarray(f'{CACHE}/grid_{base}_{prod}.nc').values
-        rmsmap = lambda run: np.sqrt(np.nanmean(
-            (xr.open_dataarray(f'{CACHE}/grid_{run}_{prod}.nc').values - gb) ** 2, axis=0))
-        panels = [('Vel', 'full (Vel−%s)' % base)] + [(c, tiw.CONTROL_XX[c]) for c in controls]
-        full = rmsmap('Vel'); vmax = np.nanpercentile(full, 98)
+        gb = _grid_vals(base, prod)
+        rmsmap = lambda run: np.sqrt(np.nanmean((_grid_vals(run, prod) - gb) ** 2, axis=0))
+        panels = [(ANCHOR, f'full ({ANCHOR}−{base})')] + [(c, tiw.CONTROL_XX[c]) for c in controls]
+        full = rmsmap(ANCHOR); vmax = np.nanpercentile(full, 98)
         fig, axs = plt.subplots(2, 3, figsize=(16, 7))
         for ax, (run, lab) in zip(axs.ravel(), panels):
             pc = ax.pcolormesh(XC, YC, rmsmap(run), vmin=0, vmax=vmax, cmap='magma')
@@ -577,7 +614,7 @@ def fig_summary(controls, outdir):
     pct = np.array([[100 * (r.loc[k, 'prior'] - r.loc[k, c]) / r.loc[k, 'prior']
                      for k in keys] for c in controls])
     share = np.array([[100 * (r.loc[k, 'prior'] - r.loc[k, c])
-                       / (r.loc[k, 'prior'] - r.loc[k, 'Vel']) for k in keys]
+                       / (r.loc[k, 'prior'] - r.loc[k, ANCHOR]) for k in keys]
                       for c in controls])
     order = np.argsort(-np.nanmean(pct, axis=1))          # rank by mean % improvement
     controls = [controls[i] for i in order]; pct = pct[order]; share = share[order]
@@ -636,7 +673,7 @@ if __name__ == '__main__':
     print(f'[intercomp] done -> {di}  (controls: {controls})')
     # decomposition on the KEPT controls only (uvel/vvel excluded from the
     # projection budget / combos per TODO; they fall into the untested residual).
-    kept = [c for c in tiw.CONTROLS if c in controls]
+    kept = [c for c in (NOVEL_SINGLES if FAMILY == 'novel' else tiw.CONTROLS) if c in controls]
     dd = f'{FIGS}/decomposition'; os.makedirs(dd, exist_ok=True)
     for fn in (fig_decomp_bars, fig_decomp_depth, fig_decomp_maps):
         try:

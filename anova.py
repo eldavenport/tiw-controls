@@ -39,23 +39,60 @@ import tiw
 
 HERE = os.path.dirname(__file__)
 CACHE = tiw.CACHE
-FIGS = f'{HERE}/figs/anova'
+# Which solution the factorial is anchored on. 'vel' = TPOSE6-Vel (full, velocity
+# constraint); 'novel' = TPOSE6-noVel (same controls, no velocity data constraint).
+# d_full and every RUN below are family-specific; cross-solution comparison figures
+# (controlling_phase_amp & friends) are solution-agnostic -> COMPARISON, built once.
+FAMILY = os.environ.get('TIW_FAMILY', 'vel')
+# full-solution run for d_full. 'tsonly' = TPOSE6 assimilating TAO T&S but not U&V
+# (the solution that sits between noVel and Vel).
+ANCHOR = {'vel': 'Vel', 'novel': 'noVel', 'tsonly': 'TSOnly'}[FAMILY]
+FIGS = f'{HERE}/figs/{FAMILY}/anova'
+COMPARISON = f'{HERE}/figs/comparison'
 
 FACTORS = 'TSUW'                                   # theta, salt, uwind, swdown
 SYM = {'T': 'θ', 'S': 'S', 'U': 'u wind', 'W': 'sw'}  # 'u wind' not 'u': avoid uvel confusion
 ORDER_NAME = {1: 'main', 2: 'pair', 3: 'triad', 4: 'tetrad'}
-# run name for any subset of factors (frozenset of keys); prior = empty set.
-RUN = {
-    frozenset(): 'prior',
-    frozenset('T'): 'initialT', frozenset('S'): 'initialS',
-    frozenset('U'): 'zonalWind', frozenset('W'): 'swdown',
-    frozenset('TU'): 'initialT_uwind', frozenset('TS'): 'theta_salt',
-    frozenset('TW'): 'theta_swdown', frozenset('SU'): 'salt_uwind',
-    frozenset('SW'): 'salt_swdown', frozenset('UW'): 'uwind_swdown',
-    frozenset('TSU'): 'theta_salt_uwind', frozenset('TSW'): 'theta_salt_swdown',
-    frozenset('TUW'): 'theta_uwind_swdown', frozenset('SUW'): 'salt_uwind_swdown',
-    frozenset('TSUW'): 'top4',
+# run name for any subset of factors (frozenset of keys); prior = empty set. One map
+# per solution family. The novel map points at nv_* run keys (added to tiw.RUNS when
+# those runs land); the partial-factorial guards skip any subset whose run is absent,
+# so "singles first" works with only the 4 mains present.
+RUN_FAMILY = {
+    'vel': {
+        frozenset(): 'prior',
+        frozenset('T'): 'initialT', frozenset('S'): 'initialS',
+        frozenset('U'): 'zonalWind', frozenset('W'): 'swdown',
+        frozenset('TU'): 'initialT_uwind', frozenset('TS'): 'theta_salt',
+        frozenset('TW'): 'theta_swdown', frozenset('SU'): 'salt_uwind',
+        frozenset('SW'): 'salt_swdown', frozenset('UW'): 'uwind_swdown',
+        frozenset('TSU'): 'theta_salt_uwind', frozenset('TSW'): 'theta_salt_swdown',
+        frozenset('TUW'): 'theta_uwind_swdown', frozenset('SUW'): 'salt_uwind_swdown',
+        frozenset('TSUW'): 'top4',
+    },
+    'novel': {
+        frozenset(): 'prior',
+        frozenset('T'): 'nv_initialT', frozenset('S'): 'nv_initialS',
+        frozenset('U'): 'nv_zonalWind', frozenset('W'): 'nv_swdown',
+        frozenset('TU'): 'nv_initialT_uwind', frozenset('TS'): 'nv_theta_salt',
+        frozenset('TW'): 'nv_theta_swdown', frozenset('SU'): 'nv_salt_uwind',
+        frozenset('SW'): 'nv_salt_swdown', frozenset('UW'): 'nv_uwind_swdown',
+        frozenset('TSU'): 'nv_theta_salt_uwind', frozenset('TSW'): 'nv_theta_salt_swdown',
+        frozenset('TUW'): 'nv_theta_uwind_swdown', frozenset('SUW'): 'nv_salt_uwind_swdown',
+        frozenset('TSUW'): 'nv_top4',
+    },
+    'tsonly': {
+        frozenset(): 'prior',
+        frozenset('T'): 'ts_initialT', frozenset('S'): 'ts_initialS',
+        frozenset('U'): 'ts_zonalWind', frozenset('W'): 'ts_swdown',
+        frozenset('TU'): 'ts_initialT_uwind', frozenset('TS'): 'ts_theta_salt',
+        frozenset('TW'): 'ts_theta_swdown', frozenset('SU'): 'ts_salt_uwind',
+        frozenset('SW'): 'ts_salt_swdown', frozenset('UW'): 'ts_uwind_swdown',
+        frozenset('TSU'): 'ts_theta_salt_uwind', frozenset('TSW'): 'ts_theta_salt_swdown',
+        frozenset('TUW'): 'ts_theta_uwind_swdown', frozenset('SUW'): 'ts_salt_uwind_swdown',
+        frozenset('TSUW'): 'ts_top4',
+    },
 }
+RUN = RUN_FAMILY[FAMILY]
 PRODS = [('argo_T', 'Argo T'), ('argo_S', 'Argo S'), ('tao_U', 'TAO U'),
          ('tao_V', 'TAO V'), ('sst', 'SST'), ('ssh', 'SSH')]
 EUC_LON, TIW_LON, TIW_LAT, TIW_ZTOP = (130, 282), (200, 282), (2.0, 5.0), 15
@@ -75,10 +112,25 @@ def subsets(order=None):
     return sorted(out, key=lambda S: (len(S), sorted(S, key='TSUW'.index)))
 
 
+def _factorial_missing(kind, channel=None):
+    """Runs in the full factorial lattice (prior + anchor + every subset) whose cached
+    source for `kind` is absent. Lets the exact-identity decompositions (euc/tiw) skip
+    instead of crashing when the factorial is only partially run — e.g. noVel 'singles
+    first', where only the 4 mains exist. kind: 'euc' (euctiw_*.nc) | 'tiw' (per-channel)."""
+    runs = ['prior', ANCHOR] + [RUN[S] for S in subsets()]
+    if kind == 'tiw':
+        return [r for r in runs if not _tiw_src(r, channel)]
+    return [r for r in runs if not os.path.exists(f'{CACHE}/euctiw_{r}.nc')]
+
+
 # ---- obs-space engine -------------------------------------------------------
 def _load_obs(prodkey, run):
     if prodkey in ('sst', 'ssh'):
-        return xr.open_dataarray(f'{CACHE}/grid_{run}_{prodkey}.nc').values
+        # align grids to the canonical 122-day axis so runs with a missing day
+        # (e.g. nv_initialT_uwind has 121) stay shape-compatible for inclusion-
+        # exclusion; the gap becomes NaN, which the isfinite mask already drops.
+        da = xr.open_dataarray(f'{CACHE}/grid_{run}_{prodkey}.nc')
+        return da.reindex(time=tiw.DAYS).values if 'time' in da.dims else da.values
     p, var = prodkey.split('_')
     return np.load(f'{CACHE}/model_{run}_{p}_{var}.npy')
 
@@ -91,7 +143,7 @@ def anova_term(S, prodkey):
     """Clean |S|-way interaction a_S, own increment d_S, shared d_full=m_Vel-m_prior,
     all in obs space on a common valid mask. S='residual' -> r=m_Vel-m_top4."""
     mp = _load_obs(prodkey, 'prior')
-    full = _load_obs(prodkey, 'Vel')
+    full = _load_obs(prodkey, ANCHOR)
     if S == 'residual':
         top4 = _load_obs(prodkey, RUN[frozenset(FACTORS)])
         valid = np.isfinite(mp) & np.isfinite(full) & np.isfinite(top4)
@@ -264,9 +316,9 @@ def _scalar_rows(v, tag):
         a = _incl_excl(v, S)
         asum += a
         rows.append(dict(**tag, term=term_label(S), order=_order(S), a=a))
-    r = v['Vel'] - v[RUN[frozenset(FACTORS)]]
+    r = v[ANCHOR] - v[RUN[frozenset(FACTORS)]]
     rows.append(dict(**tag, term='residual r', order='resid', a=r))
-    dfull = v['Vel'] - v['prior']
+    dfull = v[ANCHOR] - v['prior']
     for row in rows:
         row['pct_of_full'] = 100 * row['a'] / dfull if dfull else np.nan
     return rows, abs((asum + r) - dfull)
@@ -284,13 +336,13 @@ def _bars(ax, d, unit, title, ref=None, col='a', ylabel=None):
 def _legend(fig):
     h = [plt.Rectangle((0, 0), 1, 1, color=CMAP[o]) for o in [1, 2, 3, 4, 'resid']]
     h += [plt.Line2D([0], [0], color='k', ls='--', lw=1.3)]
-    fig.legend(h, ['main', 'pair', 'triad', 'tetrad', 'residual', 'Vel−prior (total)'],
+    fig.legend(h, ['main', 'pair', 'triad', 'tetrad', 'residual', f'{ANCHOR}−prior (total)'],
                loc='lower center', ncol=6, bbox_to_anchor=(0.5, 0.0))
 
 
 def euc_metric_anova():
     """Basin-window EUC scalar decomposition (unchanged analysis)."""
-    runs = ['prior', 'Vel'] + [RUN[S] for S in subsets()]
+    runs = ['prior', ANCHOR] + [RUN[S] for S in subsets()]
     M = {r: euc_scalars(xr.open_dataset(f'{CACHE}/euctiw_{r}.nc')['euc']) for r in runs}
     pd.DataFrame({m: {r: M[r][m] for r in runs} for m in METRICS}).to_csv(
         f'{FIGS}/euc_metrics_raw.csv')
@@ -304,9 +356,9 @@ def euc_metric_anova():
           {k: f'{val:.2e}' for k, val in ident.items()})
     fig, axs = plt.subplots(1, 3, figsize=(18, 5.5))
     for ax, m in zip(axs, METRICS):
-        full = M['Vel'][m] - M['prior'][m]
+        full = M[ANCHOR][m] - M['prior'][m]
         _bars(ax, df[df.metric == m], UNITS[m],
-              f'{m}   (prior {M["prior"][m]:.3g} → Vel {M["Vel"][m]:.3g} {UNITS[m]}; d_full {full:+.3g})',
+              f'{m}   (prior {M["prior"][m]:.3g} → {ANCHOR} {M[ANCHOR][m]:.3g} {UNITS[m]}; d_full {full:+.3g})',
               ref=full)
     _legend(fig)
     fig.suptitle('EUC physical-scalar factor separation, BASIN WINDOW (signed, physical units): '
@@ -317,13 +369,13 @@ def euc_metric_anova():
     # projection framing: each term as % of the final increment d_full (bars sum to ~100%)
     fig, axs = plt.subplots(1, 3, figsize=(18, 5.5))
     for ax, m in zip(axs, METRICS):
-        full = M['Vel'][m] - M['prior'][m]
+        full = M[ANCHOR][m] - M['prior'][m]
         _bars(ax, df[df.metric == m], UNITS[m],
               f'{m}  (d_full {full:+.3g} {UNITS[m]} = 100%)',
               ref=100, col='pct_of_full', ylabel='% of final increment')
     _legend(fig)
     fig.suptitle('EUC physical-scalar factor separation, BASIN WINDOW — projection framing: '
-                 '% of the final increment d_full = M(Vel) - M(prior) each term accounts for (sum ~100%)')
+                 f'% of the final increment d_full = M({ANCHOR}) - M(prior) each term accounts for (sum ~100%)')
     fig.tight_layout(rect=[0, 0.04, 1, 0.96])
     fig.savefig(f'{FIGS}/euc_anova_projection.png', dpi=140); plt.close(fig)
     return df
@@ -331,7 +383,7 @@ def euc_metric_anova():
 
 def euc_metric_anova_bylon():
     """Same scalars decomposed AT each TAO obs longitude (170°W/140°W/110°W)."""
-    runs = ['prior', 'Vel'] + [RUN[S] for S in subsets()]
+    runs = ['prior', ANCHOR] + [RUN[S] for S in subsets()]
     E = {r: xr.open_dataset(f'{CACHE}/euctiw_{r}.nc')['euc'] for r in runs}
     M = {(L, r): euc_scalars_at(E[r], lon) for L, lon in TAO_LONS.items() for r in runs}
     pd.DataFrame({(L, m): {r: M[(L, r)][m] for r in runs}
@@ -352,9 +404,9 @@ def euc_metric_anova_bylon():
     for i, m in enumerate(METRICS):
         for j, L in enumerate(TAO_LONS):
             ax = axs[i, j]
-            full = M[(L, 'Vel')][m] - M[(L, 'prior')][m]
+            full = M[(L, ANCHOR)][m] - M[(L, 'prior')][m]
             _bars(ax, df[(df.metric == m) & (df.longitude == L)], UNITS[m],
-                  f'{m} @ {L}  (prior {M[(L,"prior")][m]:.3g} → Vel {M[(L,"Vel")][m]:.3g}; '
+                  f'{m} @ {L}  (prior {M[(L,"prior")][m]:.3g} → {ANCHOR} {M[(L,ANCHOR)][m]:.3g}; '
                   f'd_full {full:+.3g})', ref=full)
             if i < len(METRICS) - 1:
                 ax.set_xlabel('')
@@ -372,7 +424,7 @@ def euc_metric_anova_bylon():
     for i, m in enumerate(METRICS):
         for j, L in enumerate(TAO_LONS):
             ax = axs[i, j]
-            full = M[(L, 'Vel')][m] - M[(L, 'prior')][m]
+            full = M[(L, ANCHOR)][m] - M[(L, 'prior')][m]
             _bars(ax, df[(df.metric == m) & (df.longitude == L)], UNITS[m],
                   f'{m} @ {L}  (d_full {full:+.3g} = 100%)',
                   ref=100, col='pct_of_full', ylabel='% of final increment')
@@ -408,6 +460,8 @@ def _tiw_hov(run, channel):
         field = 'sst' if channel == 'SST' else 'ssh'
         s = xr.open_dataarray(f'{CACHE}/grid_{run}_{field}.nc')
         h = s.sel(YC=slice(*TIW_SST_LAT)).mean('YC')
+    if 'time' in h.dims:                    # canonical 122-day axis (runs may miss a day);
+        h = h.reindex(time=tiw.DAYS).interpolate_na('time')   # fill the gap so the FFT stays clean
     return h.sel(XC=slice(*TIW_REGION))
 
 
@@ -467,14 +521,14 @@ def _tiw_period(z):
 
 
 def tiw_phase_amp(channel):
-    runs = ['prior', 'Vel'] + [RUN[S] for S in subsets()]
+    runs = ['prior', ANCHOR] + [RUN[S] for S in subsets()]
     Z = {r: _analytic_tiw(_tiw_hov(r, channel)) for r in runs}
-    zv = Z['Vel'].values.ravel()
+    zv = Z[ANCHOR].values.ravel()
     uvel = zv / np.sqrt(np.vdot(zv, zv).real)                    # unit Vel TIW field
     c = {r: complex(np.vdot(uvel, Z[r].values.ravel())) for r in runs}   # <ẑ_Vel, z_r>
     E = {r: float(np.sqrt(np.mean(np.abs(Z[r].values) ** 2))) for r in runs}   # total TIW energy (RMS)
-    cv = c['Vel'].real                                           # = ||z_Vel|| (real, positive)
-    Tdom = _tiw_period(Z['Vel'])
+    cv = c[ANCHOR].real                                          # = ||z_anchor|| (real, positive)
+    Tdom = _tiw_period(Z[ANCHOR])
 
     rows, phase_rows = [], []
     amp_sum = 0 + 0j
@@ -483,10 +537,10 @@ def tiw_phase_amp(channel):
         amp_sum += a
         rows.append(dict(term=term_label(S), order=_order(S),
                          amp_pct=100 * a.real / cv, phase_pct=100 * a.imag / cv))
-    rc = c['Vel'] - c[RUN[frozenset(FACTORS)]]
+    rc = c[ANCHOR] - c[RUN[frozenset(FACTORS)]]
     rows.append(dict(term='residual r', order='resid', amp_pct=100 * rc.real / cv,
                      phase_pct=100 * rc.imag / cv))
-    dfull = c['Vel'] - c['prior']
+    dfull = c[ANCHOR] - c['prior']
     ident_c = abs((amp_sum + rc) - dfull)
     # energy scalar (nonlinear) ANOVA
     erows, eident = _scalar_rows({r: E[r] for r in runs}, {})
@@ -501,21 +555,21 @@ def tiw_phase_amp(channel):
     df.to_csv(f'{FIGS}/tiw_phaseamp_{channel}.csv', index=False)
     pd.DataFrame(phase_rows).to_csv(f'{FIGS}/tiw_phase_{channel}.csv', index=False)
     print(f'[{channel}] complex identity |Σa+r-dfull|={ident_c:.2e}, energy identity={eident:.2e}, '
-          f'Tdom={Tdom:.1f} d, ||z_Vel||={cv:.4g}')
+          f'Tdom={Tdom:.1f} d, ||z_{ANCHOR}||={cv:.4g}')
 
     ed = pd.DataFrame(erows)
-    efull = E['Vel'] - E['prior']
+    efull = E[ANCHOR] - E['prior']
     fig, axs = plt.subplots(1, 3, figsize=(19, 5.5))
-    _bars(axs[0], df.assign(a=df.amp_pct), '% of Vel amp',
-          f'{channel}: amplitude IN PHASE with Vel  (Re)', ref=100 * dfull.real / cv)
-    _bars(axs[1], df.assign(a=df.phase_pct), '% of Vel amp',
+    _bars(axs[0], df.assign(a=df.amp_pct), f'% of {ANCHOR} amp',
+          f'{channel}: amplitude IN PHASE with {ANCHOR}  (Re)', ref=100 * dfull.real / cv)
+    _bars(axs[1], df.assign(a=df.phase_pct), f'% of {ANCHOR} amp',
           f'{channel}: PHASE-shift / quadrature  (Im)', ref=100 * dfull.imag / cv)
     _bars(axs[2], ed, 'm/s' if channel == 'V' else '°C',
-          f'{channel}: total TIW energy  (prior {E["prior"]:.3g} → Vel {E["Vel"]:.3g}; d {efull:+.3g})',
+          f'{channel}: total TIW energy  (prior {E["prior"]:.3g} → {ANCHOR} {E[ANCHOR]:.3g}; d {efull:+.3g})',
           ref=efull)
     _legend(fig)
-    fig.suptitle(f'TIW {channel} phase+amplitude factor separation vs Vel  '
-                 f'(amplitude = reinforces Vel wave; quadrature = shifts its phase; '
+    fig.suptitle(f'TIW {channel} phase+amplitude factor separation vs {ANCHOR}  '
+                 f'(amplitude = reinforces {ANCHOR} wave; quadrature = shifts its phase; '
                  f'energy = net wave activity).  Region {TIW_REGION}°E, band {TIW_BAND["per"]} d / '
                  f'{TIW_BAND["wav"]} km westward')
     fig.tight_layout(rect=[0, 0.04, 1, 0.96])
@@ -535,19 +589,19 @@ def tiw_phase_amp(channel):
     _bars(axs[2], ed, '%', f'{channel}: total TIW energy — % of increment',
           ref=100, col='pct_of_full', ylabel='% of final increment')
     _legend(fig)
-    fig.suptitle(f'TIW {channel} phase+amplitude factor separation vs Vel — projection framing: '
-                 f'% of the final increment d_full = c(Vel) - c(prior) each term accounts for (sum ~100%)')
+    fig.suptitle(f'TIW {channel} phase+amplitude factor separation vs {ANCHOR} — projection framing: '
+                 f'% of the final increment d_full = c({ANCHOR}) - c(prior) each term accounts for (sum ~100%)')
     fig.tight_layout(rect=[0, 0.04, 1, 0.96])
     fig.savefig(f'{FIGS}/tiw_phaseamp_{channel}_projection.png', dpi=140); plt.close(fig)
 
     # envelope Hovmöllers |a_S^z| for dominant terms + the Vel-prior wave
     terms = TIW_MAP_TERMS
     fig, axs = plt.subplots(1, len(terms) + 1, figsize=(4.3 * (len(terms) + 1), 5), sharey=True)
-    dfield = Z['Vel'] - Z['prior']
+    dfield = Z[ANCHOR] - Z['prior']
     X = dfield.XC.values; t = np.arange(dfield.sizes['time'])
     lim0 = np.nanpercentile(np.abs(dfield.values), 99)
     axs[0].pcolormesh(X, t, np.abs(dfield.values), vmin=0, vmax=lim0, cmap='magma')
-    axs[0].set_title(f'|z_Vel − z_prior|\nRMS={_rms(np.abs(dfield.values)):.3g}')
+    axs[0].set_title(f'|z_{ANCHOR} − z_prior|\nRMS={_rms(np.abs(dfield.values)):.3g}')
     axs[0].set_ylabel('day of run')
     for ax, S in zip(axs[1:], terms):
         aS = _incl_excl(Z, S)
@@ -573,7 +627,8 @@ PA_RUNS = [('prior', '0.5', 'prior (no DA)'), ('noVel', 'tab:orange', 'TPOSE6-no
            ('initialT', 'tab:green', 'θ (xx_theta)'),
            ('zonalWind', 'tab:purple', 'u wind (xx_uwind)'),
            ('initialT_uwind', 'tab:brown', 'θ+u wind'),
-           ('top4', 'magenta', 'θ+S+u wind+sw'), ('Vel', 'k', 'Full (TPOSE6-Vel)')]
+           ('top4', 'magenta', 'θ+S+u wind+sw'),
+           ('TSOnly', 'tab:cyan', 'TAO T/S only'), ('Vel', 'k', 'Full (TPOSE6-Vel)')]
 
 
 def tiw_pa_timeseries(channel, ref='Vel'):
@@ -615,7 +670,7 @@ def tiw_pa_timeseries(channel, ref='Vel'):
                  'hypothesis: θ locks phase (low lag) early; u wind drives amplitude growth; '
                  'θ×u wind amplifies a correctly-phased wave')
     fig.tight_layout()
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     tag = '' if ref == 'Vel' else '_vsobs'
     fig.savefig(f'{d}/tiw_{channel}_amp_phase_timeseries{tag}.png', dpi=140); plt.close(fig)
     pd.DataFrame(out).to_csv(f'{d}/tiw_{channel}_amp_phase_timeseries{tag}.csv', index=False)
@@ -623,12 +678,12 @@ def tiw_pa_timeseries(channel, ref='Vel'):
 
 # runs scored against the observed TIW field, ordered prior/noVel -> controls -> combos -> Vel.
 VS_OBS_RUNS = ['prior', 'noVel', 'initialT', 'initialS', 'zonalWind', 'swdown',
-               'initialT_uwind', 'theta_salt', 'theta_salt_uwind', 'top4', 'Vel']
+               'initialT_uwind', 'theta_salt', 'theta_salt_uwind', 'top4', 'TSOnly', 'Vel']
 
 
 def _run_label(r):
     return {'prior': 'prior (no DA)', 'noVel': 'TPOSE6-noVel',
-            'Vel': 'Full (Vel)'}.get(r) or tiw.CONTROL_XX.get(r, r)
+            'TSOnly': 'TAO T/S only', 'Vel': 'Full (Vel)'}.get(r) or tiw.CONTROL_XX.get(r, r)
 
 
 def _skill_bars(df, suptitle, fname, coh_title):
@@ -636,7 +691,8 @@ def _skill_bars(df, suptitle, fname, coh_title):
     Lag dropped: the net lag is only meaningful once coherence is high (lag still in CSV)."""
     x = np.arange(len(df))
     colors = ['0.5' if r == 'prior' else 'tab:orange' if r == 'noVel'
-              else 'k' if r == 'Vel' else 'tab:blue' for r in df.run]
+              else 'tab:green' if r == 'TSOnly' else 'k' if r == 'Vel'
+              else 'tab:blue' for r in df.run]
     fig, axs = plt.subplots(1, 2, figsize=(11, 4.8))
     for ax, col, ttl, ref in [
             (axs[0], 'coherence', coh_title, None),
@@ -647,7 +703,7 @@ def _skill_bars(df, suptitle, fname, coh_title):
         ax.set_xticks(x); ax.set_xticklabels(df.label, rotation=90, fontsize=7)
         ax.set_title(ttl); ax.grid(axis='y', alpha=.3)
     fig.suptitle(suptitle); fig.tight_layout()
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     fig.savefig(f'{d}/{fname}', dpi=140); plt.close(fig)
 
 
@@ -668,7 +724,7 @@ def tiw_skill_vs_obs(channel):
                          amp_ratio=np.linalg.norm(z) / no,
                          lag_days=np.angle(c) / (2 * np.pi) * Tdom))
     df = pd.DataFrame(rows)
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     df.to_csv(f'{d}/tiw_{channel}_skill_vs_obs.csv', index=False)
     src = 'mw_fusion SST' if channel == 'SST' else 'RADS SSH'
     _skill_bars(df, f'TIW {channel} skill vs band-passed OBSERVATIONS ({src}; '
@@ -710,7 +766,7 @@ def tiw_tao_skill():
         rows.append(dict(run=r, label=_run_label(r), coherence=abs(c) / (no * np.linalg.norm(z)),
                          amp_ratio=np.linalg.norm(z) / no, lag_days=np.angle(c) / (2 * np.pi) * Tdom))
     df = pd.DataFrame(rows)
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     df.to_csv(f'{d}/tiw_tao_skill_vs_obs.csv', index=False)
     _skill_bars(df, 'TIW-V skill vs TAO current meters (3 eq. moorings, 0 to -250 m '
                 f'aggregated; temporal band {TIW_BAND["per"]} d)',
@@ -777,7 +833,7 @@ def tiw_region_rmse():
     axs[0].set_ylabel('% RMSE reduction vs prior')
     fig.suptitle('TIW-region vs whole-domain RMSE reduction — separating overall skill from TIW improvement')
     fig.tight_layout()
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     fig.savefig(f'{d}/tiw_region_rmse.png', dpi=140); plt.close(fig)
 
 
@@ -831,7 +887,7 @@ def tiw_scale_rmse_3d(mode, sst_box, scope_lbl, fname):
     axs[0].set_ylabel('% RMSE reduction vs prior')
     fig.suptitle(f'{band_lbl} RMSE reduction vs prior — SST ({scope_lbl}) + TAO U/V equatorial subsurface')
     fig.tight_layout()
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     fig.savefig(f'{d}/{fname}', dpi=140); plt.close(fig)
 
 
@@ -912,7 +968,7 @@ def tiw_tao_depth():
     fig.suptitle('TIW meridional-velocity phase & amplitude vs TAO current meters, by depth & longitude '
                  f'(temporal band {TIW_BAND["per"]} d)')
     fig.tight_layout()
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     fig.savefig(f'{d}/tiw_tao_depth_phase_amp.png', dpi=140); plt.close(fig)
     pd.DataFrame(rows).to_csv(f'{d}/tiw_tao_depth_phase_amp.csv', index=False)
 
@@ -954,7 +1010,7 @@ def tiw_band_sensitivity():
     fig.suptitle(f'Wavelength-band sensitivity vs obs (disjoint bands, period {TIW_BAND["per"]} d): '
                  'phase coherence (top) + amplitude ratio (bottom)')
     fig.tight_layout()
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     fig.savefig(f'{d}/tiw_band_sensitivity.png', dpi=140); plt.close(fig)
     pd.DataFrame(rows).to_csv(f'{d}/tiw_band_sensitivity.csv', index=False)
 
@@ -963,7 +1019,7 @@ def controlling_phase_amp():
     """Build the curated folder for the phase/amplitude-control hypothesis: generate the
     new time-series + vs-obs skill figures and copy in the existing TIW/EUC figures."""
     import shutil
-    d = f'{FIGS}/controlling_phase_amp'; os.makedirs(d, exist_ok=True)
+    d = COMPARISON; os.makedirs(d, exist_ok=True)
     for ch in ('V', 'SST'):
         tiw_pa_timeseries(ch, ref='Vel')
     for ch in ('SST', 'SSH'):                 # gridded obs only (TAO V too sparse for fields)
@@ -997,23 +1053,23 @@ def controlling_phase_amp():
 # ---- (3) gridded interaction field map (any order, incl. residual) ----------
 def _grid_timemean(S, field):
     """Inclusion-exclusion over the cached gridded field, time-averaged -> (YC,XC)."""
+    anchor_full = xr.open_dataarray(f'{CACHE}/grid_{ANCHOR}_{field}.nc').mean('time')
     if S == 'residual':
-        full = xr.open_dataarray(f'{CACHE}/grid_Vel_{field}.nc').mean('time')
         top4 = xr.open_dataarray(f'{CACHE}/grid_{RUN[frozenset(FACTORS)]}_{field}.nc').mean('time')
-        return full - top4, xr.open_dataarray(f'{CACHE}/grid_Vel_{field}.nc').mean('time') - \
+        return anchor_full - top4, anchor_full - \
             xr.open_dataarray(f'{CACHE}/grid_prior_{field}.nc').mean('time')
     S = frozenset(S)
     g = {T: xr.open_dataarray(f'{CACHE}/grid_{RUN[T]}_{field}.nc').mean('time')
          for k in range(len(S) + 1) for T in map(frozenset, itertools.combinations(S, k))}
     a = sum((-1) ** (len(S) - len(T)) * g[T] for T in g)
-    dfull = xr.open_dataarray(f'{CACHE}/grid_Vel_{field}.nc').mean('time') - g[frozenset()]
+    dfull = anchor_full - g[frozenset()]
     return a, dfull
 
 
 def fig_grid_map(terms, field='sst'):
     unit = '°C' if field == 'sst' else 'm'
     _, dfull = _grid_timemean(terms[0], field)
-    panels = [(dfull, 'd_full  m_Vel-m_prior')]
+    panels = [(dfull, f'd_full  m_{ANCHOR}-m_prior')]
     for S in terms:
         a, _ = _grid_timemean(S, field)
         panels.append((a, 'residual r' if S == 'residual' else f'a[{term_label(S)}]'))
@@ -1039,7 +1095,8 @@ def _mask(ds, v):
 
 def _has_3d(run):
     import glob
-    return bool(glob.glob(f'{tiw.RUNS[run][0]}/diag_state.*.data'))
+    # a factorial term's run may not be registered yet (partial factorial) -> treat as absent.
+    return run in tiw.RUNS and bool(glob.glob(f'{tiw.RUNS[run][0]}/diag_state.*.data'))
 
 
 def _euc_tiv_from_disk(run):
@@ -1076,6 +1133,10 @@ def _load_3d(runs):
         else:
             euc[run], tiv[run] = _euc_tiv_from_disk(run)
             print(f'  loaded {run} (diag_state)', flush=True)
+        # align the TIW Hovmöller to the canonical 122-day axis so a run with a
+        # missing day (nv_initialT_uwind=121) stays shape-compatible; gap -> NaN.
+        if 'time' in tiv[run].dims:
+            tiv[run] = tiv[run].reindex(time=tiw.DAYS)
     return euc, tiv
 
 
@@ -1172,13 +1233,23 @@ if __name__ == '__main__':
         print(f'-> {CACHE}/euctiw_*.nc')
 
     if cmd in ('euc', 'all'):
-        df = euc_metric_anova()
-        print(df.pivot(index='term', columns='metric', values='a').to_string())
-        euc_metric_anova_bylon()
-        print('-> euc_anova{,_bylon}.csv, euc_metrics{,_bylon}_raw.csv, euc_anova{,_bylon}.png')
+        miss = _factorial_missing('euc')
+        if miss:
+            print(f'[euc] family={FAMILY}: incomplete factorial, missing euctiw cache for '
+                  f'{miss} -> skipping EUC decomposition (needs the full factorial).')
+        else:
+            df = euc_metric_anova()
+            print(df.pivot(index='term', columns='metric', values='a').to_string())
+            euc_metric_anova_bylon()
+            print('-> euc_anova{,_bylon}.csv, euc_metrics{,_bylon}_raw.csv, euc_anova{,_bylon}.png')
 
     if cmd in ('tiw', 'all'):
         for ch in ('V', 'SST'):
+            miss = _factorial_missing('tiw', ch)
+            if miss:
+                print(f'[tiw {ch}] family={FAMILY}: incomplete factorial, missing {ch} source '
+                      f'for {miss} -> skipping.')
+                continue
             tiw_phase_amp(ch)
         print('-> tiw_phaseamp_{V,SST}.{png,csv}, tiw_phase_{V,SST}.csv, tiw_envelope_{V,SST}.png')
 
@@ -1189,10 +1260,14 @@ if __name__ == '__main__':
 
     if cmd in ('maps', 'all'):
         # dominant higher-order terms + residual, SST (largest interaction) and SSH.
-        fig_grid_map(['TU', 'TS', 'TSU', 'TSUW'], field='sst')
-        fig_grid_map(['residual'], field='sst')
-        fig_grid_map(['residual'], field='ssh')
-        print('-> SST/SSH interaction maps')
+        # needs the pair/triad/top4 grid caches -> skip (not crash) on a partial factorial.
+        try:
+            fig_grid_map(['TU', 'TS', 'TSU', 'TSUW'], field='sst')
+            fig_grid_map(['residual'], field='sst')
+            fig_grid_map(['residual'], field='ssh')
+            print('-> SST/SSH interaction maps')
+        except FileNotFoundError as e:
+            print(f'[maps] family={FAMILY}: incomplete factorial ({e}); skipping interaction maps.')
 
     if cmd in ('fields', 'pairs', 'all'):
         # EUC/TIW field decomposition for any-order terms (default: all 6 pairs +
@@ -1224,8 +1299,12 @@ if __name__ == '__main__':
         # fundamental identity (per obs point, one common mask across all runs):
         #   Σ_{nonempty S} a_S == m_top4 - m_prior   and   d_top4 + r == d_full.
         for key, name in PRODS:
-            runs = {r: _load_obs(key, r).ravel() for r in
-                    ['prior', 'Vel'] + [RUN[S] for S in subsets()]}
+            try:
+                runs = {r: _load_obs(key, r).ravel() for r in
+                        ['prior', ANCHOR] + [RUN[S] for S in subsets()]}
+            except FileNotFoundError:
+                print(f'{name:7s} skipped — incomplete factorial for family={FAMILY}')
+                continue
             v = np.all([np.isfinite(x) for x in runs.values()], axis=0)
             m = {r: runs[r][v] for r in runs}
             a_sum = sum(
@@ -1234,8 +1313,8 @@ if __name__ == '__main__':
                     for T in itertools.combinations(S, k))
                 for S in subsets())
             d_top4 = m[RUN[frozenset(FACTORS)]] - m['prior']
-            r = m['Vel'] - m[RUN[frozenset(FACTORS)]]
-            d_full = m['Vel'] - m['prior']
+            r = m[ANCHOR] - m[RUN[frozenset(FACTORS)]]
+            d_full = m[ANCHOR] - m['prior']
             e1 = np.max(np.abs(a_sum - d_top4))
             e2 = np.max(np.abs((d_top4 + r) - d_full))
             print(f'{name:7s} max|Σa_S - d_top4|={e1:.2e}  max|d_top4+r - d_full|={e2:.2e}')

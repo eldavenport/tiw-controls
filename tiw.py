@@ -23,12 +23,23 @@ REF_DATE = '2012-09-01'
 NT = 122                      # daily records, Sep 1 - Dec 31 2012
 DAYS = pd.date_range(REF_DATE, periods=NT, freq='D')
 _EXP = '/data/SO3/edavenport/tpose6/withheld_controls_exp/sep2012'
+# noVel-anchored single-control experiments (same fixed-increment design, controls set to
+# their TPOSE6-noVel optimized values). Dir names use the noVel convention (uwind, not
+# zonalWind); run config matches the Vel experiments (72 iters/file, delta_t 1200).
+_EXP_NOVEL = '/data/SO3/edavenport/tpose6/withheld_controls_exp/sep2012_noVel'
+# TAO-TS-only family: same prior/fixed-increment design, controls set to the
+# TAO-T/S-constrained (no velocity obs) optimized values. Dir names are Vel-style
+# (zonalWind, not uwind). Config 72 iters/file, delta_t 1200 (same as Vel exps).
+_EXP_TSONLY = '/data/SO3/edavenport/tpose6/withheld_controls_exp/sep2012_TSOnly'
 
 # role -> (data_dir, itPerFile, delta_t). noVel writes at 48*1800s, others 72*1200s.
 RUNS = {
     'prior':    ('/data/SO3/edavenport/tpose6/diags/sep2012/run_iter0',  72, 1200),
     'noVel':    ('/data/SO6/TPOSE_diags/tpose6/sep2012/diags',           48, 1800),
     'Vel':      ('/data/SO3/edavenport/tpose6/diags/sep2012/run_iter14', 72, 1200),
+    # full TAO-T/S solution (assimilates TAO T&S, NOT U&V) — anchor for the TSOnly
+    # family; its optimized increments are what the ts_* experiments hold fixed.
+    'TSOnly':   ('/data/SO3/edavenport/tpose6/diags/sep2012/velocity_withhold/run_iter14', 72, 1200),
     # single-control experiments (hold all else at background)
     'initialT':       (f'{_EXP}/run_initialT',       72, 1200),
     'initialS':       (f'{_EXP}/run_initialS',       72, 1200),
@@ -50,6 +61,54 @@ RUNS = {
     'salt_uwind':     (f'{_EXP}/run_salt_uwind',     72, 1200),  # salt x uwind
     # reduced-full: subset {theta,uwind,salt,swdown} all ON (not a pair -> not in COMBOS).
     'top4':           (f'{_EXP}/run_top4',           72, 1200),
+    # noVel-family single controls (anchor=noVel; see RUN_FAMILY['novel'] in anova.py).
+    # key uses the Vel-family control name, dir uses the noVel name (uwind == zonalWind).
+    'nv_initialT':    (f'{_EXP_NOVEL}/run_initialT', 72, 1200),  # xx_theta (noVel)
+    'nv_initialS':    (f'{_EXP_NOVEL}/run_initialS', 72, 1200),  # xx_salt  (noVel)
+    'nv_zonalWind':   (f'{_EXP_NOVEL}/run_uwind',    72, 1200),  # xx_uwind (noVel)
+    'nv_swdown':      (f'{_EXP_NOVEL}/run_swdown',   72, 1200),  # xx_swdown(noVel)
+    # noVel-family extra forcing singles (screen only; NOT in the TSUW factorial)
+    'nv_atmosT':         (f'{_EXP_NOVEL}/run_atemp',  72, 1200),  # xx_atemp
+    'nv_atmosQ':         (f'{_EXP_NOVEL}/run_aqh',    72, 1200),  # xx_aqh
+    'nv_precip':         (f'{_EXP_NOVEL}/run_precip', 72, 1200),  # xx_precip
+    'nv_meridionalWind': (f'{_EXP_NOVEL}/run_vwind',  72, 1200),  # xx_vwind
+    'nv_lwdown':         (f'{_EXP_NOVEL}/run_lwdown', 72, 1200),  # xx_lwdown
+    # noVel combos (IN the TSUW factorial; keys match RUN_FAMILY['novel'] in anova.py).
+    # dir uses noVel naming; TU run has 121/122 records (one missing, handled by load_run).
+    'nv_theta_salt':       (f'{_EXP_NOVEL}/run_theta_salt',              72, 1200),  # TS
+    'nv_initialT_uwind':   (f'{_EXP_NOVEL}/run_theta_uwind',             72, 1200),  # TU
+    'nv_theta_swdown':     (f'{_EXP_NOVEL}/run_theta_swdown',            72, 1200),  # TW
+    'nv_salt_uwind':       (f'{_EXP_NOVEL}/run_salt_uwind',              72, 1200),  # SU
+    'nv_salt_swdown':      (f'{_EXP_NOVEL}/run_salt_swdown',             72, 1200),  # SW
+    'nv_uwind_swdown':     (f'{_EXP_NOVEL}/run_uwind_swdown',            72, 1200),  # UW
+    'nv_theta_salt_uwind':   (f'{_EXP_NOVEL}/run_theta_uwind_salt',         72, 1200),  # TSU
+    'nv_theta_salt_swdown':  (f'{_EXP_NOVEL}/run_theta_salt_swdown',        72, 1200),  # TSW
+    'nv_theta_uwind_swdown': (f'{_EXP_NOVEL}/run_theta_uwind_swdown',       72, 1200),  # TUW
+    'nv_salt_uwind_swdown':  (f'{_EXP_NOVEL}/run_salt_uwind_swdown',        72, 1200),  # SUW
+    'nv_top4':             (f'{_EXP_NOVEL}/run_theta_uwind_salt_swdown', 72, 1200),  # TSUW
+    # TSOnly-family single controls (anchor=TSOnly; dir names Vel-style). 6 with
+    # output so far; more experiments copied in as diag_state is freed.
+    'ts_initialT':        (f'{_EXP_TSONLY}/run_initialT',        72, 1200),  # xx_theta
+    'ts_initialS':        (f'{_EXP_TSONLY}/run_initialS',        72, 1200),  # xx_salt
+    'ts_zonalWind':       (f'{_EXP_TSONLY}/run_zonalWind',       72, 1200),  # xx_uwind
+    'ts_meridionalWind':  (f'{_EXP_TSONLY}/run_meridionalWind',  72, 1200),  # xx_vwind
+    'ts_swdown':          (f'{_EXP_TSONLY}/run_swdown',          72, 1200),  # xx_swdown
+    'ts_precip':          (f'{_EXP_TSONLY}/run_precip',          72, 1200),  # xx_precip
+    'ts_lwdown':          (f'{_EXP_TSONLY}/run_lwdown',          72, 1200),  # xx_lwdown
+    # TSOnly combos (keys mirror RUN_FAMILY subsets; dir names vary by content)
+    'ts_theta_salt':        (f'{_EXP_TSONLY}/run_initialT_initialS',  72, 1200),  # TS
+    'ts_initialT_uwind':    (f'{_EXP_TSONLY}/run_initialT_uwind',     72, 1200),  # TU
+    'ts_salt_uwind':        (f'{_EXP_TSONLY}/run_salt_uwind',         72, 1200),  # SU
+    'ts_theta_salt_uwind':  (f'{_EXP_TSONLY}/run_theta_salt_uwind',   72, 1200),  # TSU
+    'ts_top4':              (f'{_EXP_TSONLY}/run_top4',               72, 1200),  # TSUW
+    'ts_atmosT':            (f'{_EXP_TSONLY}/run_atemp',              72, 1200),  # xx_atemp
+    'ts_atmosQ':            (f'{_EXP_TSONLY}/run_aqh',                72, 1200),  # xx_aqh
+    'ts_theta_swdown':        (f'{_EXP_TSONLY}/run_initialT_swdown',      72, 1200),  # TW
+    'ts_salt_swdown':         (f'{_EXP_TSONLY}/run_salt_swdown',          72, 1200),  # SW
+    'ts_uwind_swdown':        (f'{_EXP_TSONLY}/run_uwind_swdown',         72, 1200),  # UW
+    'ts_theta_salt_swdown':   (f'{_EXP_TSONLY}/run_theta_salt_swdown',    72, 1200),  # TSW
+    'ts_theta_uwind_swdown':  (f'{_EXP_TSONLY}/run_theta_uwind_swdown',   72, 1200),  # TUW
+    'ts_salt_uwind_swdown':   (f'{_EXP_TSONLY}/run_salt_uwind_swdown',    72, 1200),  # SUW
     # triads (not pairs -> not in COMBOS; see TRIADS).
     'theta_salt_uwind':   (f'{_EXP}/run_theta_salt_uwind',   72, 1200),
     'theta_salt_swdown':  (f'{_EXP}/run_theta_salt_swdown',  72, 1200),  # pending run
@@ -90,7 +149,16 @@ CONTROL_XX = {'initialT': 'xx_theta', 'initialS': 'xx_salt', 'zonalWind': 'xx_uw
               'precip': 'xx_precip', 'uvel': 'xx_uvel', 'vvel': 'xx_vvel',
               # multi-control combos (for per-experiment figures of combined runs)
               'initialT_uwind': 'θ+u wind', 'theta_salt': 'θ+S',
-              'theta_salt_uwind': 'θ+S+u wind', 'top4': 'θ+S+u wind+sw'}
+              'theta_salt_uwind': 'θ+S+u wind', 'top4': 'θ+S+u wind+sw',
+              # noVel-family singles (same control fields, noVel-optimized increments)
+              'nv_initialT': 'xx_theta', 'nv_initialS': 'xx_salt',
+              'nv_zonalWind': 'xx_uwind', 'nv_swdown': 'xx_swdown',
+              'nv_atmosT': 'xx_atemp', 'nv_atmosQ': 'xx_aqh',
+              'nv_precip': 'xx_precip', 'nv_meridionalWind': 'xx_vwind',
+              'nv_lwdown': 'xx_lwdown',
+              # noVel combos (labels for per-experiment combo figures)
+              'nv_theta_salt': 'θ+S', 'nv_initialT_uwind': 'θ+u wind',
+              'nv_theta_salt_uwind': 'θ+S+u wind', 'nv_top4': 'θ+S+u wind+sw'}
 
 # model field name + its horizontal grid coords, per obs variable
 FIELD = {
