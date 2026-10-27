@@ -12,9 +12,10 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.patheffects as pe
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
-from scipy.signal import hilbert
+from scipy.signal import hilbert, find_peaks
 import tiw
 import anova
 
@@ -97,30 +98,23 @@ def fig_skill_maps():
         da = da.sel(YC=slice(*REGION['lat']), XC=slice(*REGION['lon']))
         return da.coarsen(YC=3, XC=3, boundary='trim').mean()
 
-    COLS = [('noVel', 'Vel', 'All TAO obs\n(noVel→Vel)'),
-            ('noVel', 'TSOnly', 'via TAO T/S\n(noVel→TSOnly)'),
-            ('TSOnly', 'Vel', 'via velocity obs\n(TSOnly→Vel)')]
-    ms = crop_coarsen(mean_sst)
-    fig, axs = plt.subplots(1, 3, figsize=(18, 4.6), sharex=True, sharey=True)
+    COLS = [('noVel', 'Vel', 'All TAO obs\nRMSE(noVel) − RMSE(Vel)'),
+            ('noVel', 'TSOnly', 'via TAO T/S\nRMSE(noVel) − RMSE(TSOnly)'),
+            ('TSOnly', 'Vel', 'via velocity obs\nRMSE(TSOnly) − RMSE(Vel)')]
+    fig, axs = plt.subplots(1, 3, figsize=(22, 3.6), sharex=True, sharey=True,
+                            constrained_layout=True)
     for ax, (a, b, title) in zip(axs, COLS):
         red = crop_coarsen(rmse[a] - rmse[b])
         pc = ax.pcolormesh(red.XC, red.YC, red.values, cmap='RdBu_r',
                            vmin=-0.4, vmax=0.4, shading='auto')
-        ys, xs = np.where(red.values > 0.08)
-        ax.plot(red.XC.values[xs], red.YC.values[ys], '.', color='k', ms=1.1, alpha=0.3)
-        ax.contour(ms.XC, ms.YC, ms.values, levels=[23, 25], colors='0.3',
-                   linewidths=1.0, linestyles='--')
-        for lon0 in TAO_LONS:
-            ax.axvline(lon0, color='0.5', lw=0.5, alpha=0.4)
         ax.plot([m[0] for m in TAO_EQ], [m[1] for m in TAO_EQ], 'kv', ms=8,
                 markerfacecolor='yellow', markeredgewidth=0.9)
         ax.set_title(title, fontsize=12); ax.set_xlabel('lon (°E)')
     axs[0].set_ylabel('lat (°N)')
-    fig.colorbar(pc, ax=axs, shrink=0.85, pad=0.01, label='SST RMSE reduction (°C)')
-    fig.suptitle('Where TAO reduces SST error, split by obs type  (red = error reduced; '
-                 '▼ eq. moorings, dashed = array lons, gray = 23/25 °C front; stipple > 0.08 °C)',
-                 fontsize=12)
-    fig.savefig(f'{OUT}/skill_maps_sst_by_obs.png', dpi=150, bbox_inches='tight'); plt.close(fig)
+    fig.colorbar(pc, ax=axs, shrink=0.85, label='SST RMSE difference (°C)')
+    fig.suptitle('Where TAO reduces SST error, split by obs type   '
+                 '(red = positive difference = RMSE reduced; ▼ = equatorial TAO moorings)', fontsize=13)
+    fig.savefig(f'{OUT}/skill_maps_sst_by_obs.png', dpi=150); plt.close(fig)
     print('wrote skill_maps_sst_by_obs.png')
 
 
@@ -142,20 +136,26 @@ def fig_tiw_hovmoller():
     panels = [('obs', oh, 'mw_fusion obs')] + [
         (r, _sst_hov(xr.open_dataarray(f'{CACHE}/grid_{r}_sst.nc').values, yc, xc), lab)
         for r, lab in [('noVel', 'noVel'), ('TSOnly', 'TSOnly'), ('Vel', 'Vel')]]
-    fig, axs = plt.subplots(1, 4, figsize=(16, 7), sharey=True)
-    for ax, (r, h, lab) in zip(axs, panels):
-        pc = ax.pcolormesh(h.XC, days, h.values, cmap='RdBu_r', vmin=-1.2, vmax=1.2,
-                           shading='auto')
-        if r != 'obs':                 # overlay obs TIW crests as contours
-            ax.contour(oh.XC, days, oh.values, levels=[-0.6, 0.6], colors='k',
-                       linewidths=0.6, alpha=0.7)
-        ax.set_title(lab, fontsize=12); ax.set_xlabel('lon (°E)')
-        ax.invert_yaxis()
-    axs[0].set_ylabel('time (2012)')
-    fig.colorbar(pc, ax=axs, shrink=0.85, pad=0.01, label='SST anomaly (°C), 2–6°N mean')
-    fig.suptitle('SST TIW Hovmöller (2–6°N): when & where the TIWs appear; black contours = obs crests\n'
-                 '(do the model crests line up with obs in longitude and time?)', fontsize=12)
-    fig.savefig(f'{OUT}/tiw_hovmoller_sst.png', dpi=150, bbox_inches='tight'); plt.close(fig)
+    fig, axs = plt.subplots(2, 4, figsize=(16, 12), sharex=True, sharey=True,
+                            constrained_layout=True)
+    for j, (r, h, lab) in enumerate(panels):
+        pa = axs[0, j].pcolormesh(h.XC, days, h.values, cmap='RdBu_r', vmin=-1.2, vmax=1.2,
+                                  shading='auto')
+        axs[0, j].set_title(lab, fontsize=12)
+        if r == 'obs':                 # row 2, col 1 is blank (obs has no error vs itself)
+            axs[1, j].axis('off')
+        else:
+            pe = axs[1, j].pcolormesh(h.XC, days, (h - oh).values, cmap='PuOr_r',
+                                      vmin=-1.0, vmax=1.0, shading='auto')
+            axs[1, j].set_title(f'{lab} − obs', fontsize=12)
+            axs[1, j].set_xlabel('lon (°E)')
+    axs[0, 0].invert_yaxis()
+    axs[0, 0].set_ylabel('time (2012)'); axs[1, 0].set_ylabel('time (2012)')
+    fig.colorbar(pa, ax=axs[0, :], shrink=0.8, label='SST anomaly (°C)')
+    fig.colorbar(pe, ax=axs[1, 1:], shrink=0.8, label='SST error, model − obs (°C)')
+    fig.suptitle('SST TIW Hovmöller (2–6°N): anomaly (top) and model error (bottom). '
+                 'When & where do the model TIWs match the observed ones?', fontsize=13)
+    fig.savefig(f'{OUT}/tiw_hovmoller_sst.png', dpi=150); plt.close(fig)
     print('wrote tiw_hovmoller_sst.png')
 
 
@@ -167,7 +167,7 @@ def fig_euc_section():
     def cr(da):
         return da.sel(XG=slice(180, 280)).where(da.Z > -300, drop=True)
     vel, ts_imp, v_imp = cr(E['Vel']), cr(E['TSOnly'] - E['noVel']), cr(E['Vel'] - E['TSOnly'])
-    fig, axs = plt.subplots(1, 3, figsize=(18, 4.8), sharey=True)
+    fig, axs = plt.subplots(1, 3, figsize=(21, 4.2), sharey=True, constrained_layout=True)
     p0 = axs[0].pcolormesh(vel.XG, vel.Z, vel.values, cmap='RdBu_r', vmin=-1, vmax=1, shading='auto')
     axs[0].contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5, 0.8], colors='k', linewidths=0.6)
     axs[0].set_title('Vel: mean zonal current (EUC)')
@@ -179,13 +179,11 @@ def fig_euc_section():
         ax.set_title(title)
         fig.colorbar(pc, ax=ax, shrink=0.9, label='ΔU (m/s)')
     for ax in axs:
-        for lon0, _ in MOORINGS:
-            ax.axvline(lon0, color='0.5', lw=0.6, ls=':')
         ax.set_xlabel('lon (°E)')
     axs[0].set_ylabel('depth (m)')
-    fig.suptitle('Equatorial undercurrent (time-mean U): how TAO reshapes it, via T/S vs via velocity obs '
-                 '(dotted = 170/140/110°W moorings)', fontsize=12)
-    fig.savefig(f'{OUT}/euc_section_by_obs.png', dpi=150, bbox_inches='tight'); plt.close(fig)
+    fig.suptitle('Equatorial undercurrent (time-mean U): how TAO reshapes it, via T/S vs via velocity obs',
+                 fontsize=13)
+    fig.savefig(f'{OUT}/euc_section_by_obs.png', dpi=150); plt.close(fig)
     print('wrote euc_section_by_obs.png')
 
 
@@ -274,6 +272,9 @@ def fig_filtered_timeseries():
             ax.set_title(f'TAO {var} @ 140°W, {bl}'); ax.grid(alpha=0.25)
             ax.set_ylabel(f'{var} (m/s)')
     axs[0, 0].legend(fontsize=8, ncol=2)
+    for ax in axs[-1, :]:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
     fig.suptitle('Filtered TAO U/V at 140°W (20–150 m): which solution tracks obs in the TIW band vs at low freq',
                  fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
@@ -297,16 +298,19 @@ def fig_error_envelope():
             # reference: obs TIW amplitude envelope (how big the real TIW signal is)
             vo, _ = _mooring_series('Vel', var, mlon)
             ax.fill_between(tiw.DAYS, 0, _tiw_envelope(vo), color='0.85',
-                            label='obs TIW amplitude' if i == 0 and j == 0 else None, zorder=0)
+                            label='obs TIW amplitude' if i == 0 and j == 1 else None, zorder=0)
             for run, color, lab in SOLUTIONS:
                 vo2, vm = _mooring_series(run, var, mlon)
                 ax.plot(tiw.DAYS, _tiw_envelope(vm - vo2), color=color, lw=1.8,
                         ls='--' if run == 'prior' else '-',
-                        label=lab if i == 0 and j == 0 else None)
+                        label=lab if i == 0 and j == 1 else None)
             ax.grid(alpha=0.25); ax.set_title(f'{mname}  TAO {var}', fontsize=11)
             if j == 0:
                 ax.set_ylabel('|TIW-band error| (m/s)')
-    axs[0, 0].legend(fontsize=8, loc='upper right')
+    axs[0, 1].legend(fontsize=8, loc='upper left')
+    for ax in axs[-1, :]:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
     fig.suptitle('TIW-band error envelope over time (20–150 m): when does each solution '
                  'mis-fit the observed TIW velocity?\n(gray fill = observed TIW amplitude; '
                  'lower line = better TIW tracking)', fontsize=12)
@@ -333,62 +337,73 @@ def _vhov50(run):
     return v
 
 
-# agreement colors: hot pink where the model matches the observed V sign, black where it
-# doesn't. A thin white halo (below) keeps both legible over red, blue AND white shading.
-AGREE, DISAGREE = '#ff1493', '#000000'
+DEG_M = 111320.0                 # m per degree longitude at the equator
 
 
-def _agree_column(ax, lon0, obs, mod, ydates, lw):
-    """Vertical line at lon0, colored green where sign(mod)==sign(obs), magenta otherwise."""
-    from matplotlib.colors import ListedColormap
-    y = mdates.date2num(ydates)
-    x = np.full_like(y, lon0, dtype=float)
-    pts = np.array([x, y]).T.reshape(-1, 1, 2)
-    segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
-    agree = (np.sign(obs) == np.sign(mod)).astype(float)
-    import matplotlib.patheffects as pe
-    lc = LineCollection(segs, cmap=ListedColormap([DISAGREE, AGREE]),
-                        norm=plt.Normalize(0, 1), zorder=6)
-    lc.set_array(agree[:-1]); lc.set_linewidth(lw); lc.set_capstyle('butt')
-    lc.set_path_effects([pe.Stroke(linewidth=lw + 1.8, foreground='white'), pe.Normal()])
-    ax.add_collection(lc)
+def _phase_speed(a, dlon):
+    """Dominant westward TIW phase speed in a (time, lon) box, via the 2D-FFT peak in the
+    TIW period/wavelength band. Returns (c_m_per_s<0 west, slope deg/day)."""
+    a = a - a.mean()
+    nt, nx = a.shape
+    P = np.abs(np.fft.fft2(a)) ** 2
+    f = np.fft.fftfreq(nt, 1.0)              # cycles/day
+    k = np.fft.fftfreq(nx, dlon)             # cycles/deg
+    F, K = np.meshgrid(f, k, indexing='ij')
+    with np.errstate(divide='ignore'):
+        per = np.where(F != 0, 1 / np.abs(F), np.inf)       # days
+        wav = np.where(K != 0, 1 / np.abs(K), np.inf)       # deg
+    # westward: phase fronts x = -(f/k) t move west => f,k same sign; take the f>0,k>0 rep.
+    mask = (F > 0) & (K > 0) & (per >= 12) & (per <= 45) & (wav >= 4) & (wav <= 25)
+    if not mask.any():
+        return np.nan, np.nan
+    i = np.argmax(np.where(mask, P, -np.inf))
+    f0, k0 = F.flat[i], K.flat[i]
+    slope = -f0 / k0                          # deg/day (negative = westward)
+    return slope * DEG_M / 86400.0, slope
 
 
 def fig_vhov_mooring():
-    """V@50m Hovmoller (noVel/TSOnly/Vel); at each mooring lon a thin column colored by
-    whether the modeled V agrees in SIGN with the observed mooring V (TIW phase correct?)."""
-    VMAX = 0.3
+    """V@50m equatorial Hovmoller (noVel/TSOnly/Vel) with lines tracing the dominant westward
+    TIW events, annotated with their phase speed — shows how timing & propagation adjust."""
+    VMAX = 0.5
     hov = {r: _vhov50(r) for r in ('noVel', 'TSOnly', 'Vel')}
-    obsw = {}
-    for mlon, _ in MOORINGS:
-        vo, _ = _mooring_series('Vel', 'V', mlon, zband=(-60, -40))
-        vo = pd.Series(vo).interpolate(limit_direction='both').values
-        obsw[mlon] = vo - np.nanmean(vo)
+    ha = {r: (hov[r] - hov[r].mean('time')) for r in hov}
+    lon = ha['Vel'].XC.values
+    dlon = float(np.mean(np.diff(lon)))
+    # detect the 2 dominant TIW events from the Vel longitude-RMS amplitude envelope
+    amp = np.sqrt((ha['Vel'].values ** 2).mean(axis=1))
+    amp_s = pd.Series(amp).rolling(7, center=True, min_periods=1).mean().values
+    pk, _ = find_peaks(amp_s, distance=20)
+    pk = np.sort(pk[np.argsort(amp_s[pk])[::-1][:2]])
+    events = [(max(0, p - 18), min(len(tiw.DAYS), p + 18)) for p in pk]
 
-    fig, axs = plt.subplots(1, 3, figsize=(16, 8), sharey=True)
+    fig, axs = plt.subplots(1, 3, figsize=(16, 8), sharey=True, constrained_layout=True)
     for ax, r in zip(axs, ('noVel', 'TSOnly', 'Vel')):
-        h = hov[r]; ha = h - h.mean('time')
-        pc = ax.pcolormesh(h.XC, tiw.DAYS, ha.values, cmap='RdBu_r',
+        pc = ax.pcolormesh(lon, tiw.DAYS, ha[r].values, cmap='RdBu_r',
                            vmin=-VMAX, vmax=VMAX, shading='auto')
-        for mlon, mname in MOORINGS:
-            mod = ha.sel(XC=mlon, method='nearest').values         # this run's V at the mooring
-            _agree_column(ax, mlon, obsw[mlon], mod, tiw.DAYS, lw=3.5)
-            ax.text(mlon, tiw.DAYS[-1], mname, fontsize=8, ha='center', va='top',
-                    bbox=dict(fc='white', alpha=0.8, ec='none', pad=0.6))
+        for (t0, t1) in events:
+            box = ha[r].isel(time=slice(t0, t1)).values
+            c_ms, slope = _phase_speed(box, dlon)
+            if not np.isfinite(slope):
+                continue
+            bi = np.unravel_index(np.argmax(np.abs(box)), box.shape)  # anchor on strongest crest
+            ta, la = t0 + bi[0], lon[bi[1]]
+            tt = np.array([t0, t1 - 1])
+            xx = la + slope * (tt - ta)
+            ax.plot(xx, [tiw.DAYS[t0], tiw.DAYS[t1 - 1]], 'k', lw=2.2, zorder=6,
+                    path_effects=[pe.Stroke(linewidth=4, foreground='white'), pe.Normal()])
+            tm = (t0 + t1) // 2
+            ax.annotate(f'{abs(c_ms):.2f} m/s', (la + slope * (tm - ta), tiw.DAYS[tm]),
+                        fontsize=10, fontweight='bold', ha='left', va='center',
+                        xytext=(6, 0), textcoords='offset points',
+                        bbox=dict(fc='white', alpha=0.85, ec='none', pad=1), zorder=7)
         ax.set_title(r, fontsize=13, fontweight='bold')
-        ax.set_xlabel('lon (°E)'); ax.set_xlim(*VHOV['lon']); ax.invert_yaxis()
+        ax.set_xlabel('lon (°E)'); ax.set_xlim(lon.min(), lon.max()); ax.invert_yaxis()
     axs[0].set_ylabel('time (2012)')
-    fig.colorbar(pc, ax=axs, shrink=0.8, pad=0.01, label='model V @ 50 m anomaly (m/s)')
-    leg = [Line2D([0], [0], color=AGREE, lw=5, label='model agrees with obs V sign'),
-           Line2D([0], [0], color=DISAGREE, lw=5, label='model disagrees (wrong TIW phase)')]
-    fig.legend(handles=leg, fontsize=10, loc='lower center', ncol=2,
-               bbox_to_anchor=(0.5, -0.02), framealpha=1)
-    fig.suptitle('Equatorial V at 50 m (±1°N): where each model agrees with the observed mooring V',
-                 fontsize=14)
-    fig.text(0.5, 0.925, 'columns at 170/140/110°W: pink = modeled V has the observed sign, '
-             'black = wrong sign. More pink west→east and noVel→Vel = better TIW phase.',
-             ha='center', fontsize=9, style='italic')
-    fig.savefig(f'{OUT}/vhov50_mooring_overlay.png', dpi=150, bbox_inches='tight'); plt.close(fig)
+    fig.colorbar(pc, ax=axs, shrink=0.85, label='V @ 50 m anomaly (m/s)')
+    fig.suptitle('Equatorial V at 50 m (±1°N): dominant westward TIW events and their phase speed '
+                 '(black lines; label = westward phase speed)', fontsize=13)
+    fig.savefig(f'{OUT}/vhov50_mooring_overlay.png', dpi=150); plt.close(fig)
     print('wrote vhov50_mooring_overlay.png')
 
 
