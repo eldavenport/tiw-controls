@@ -1182,7 +1182,9 @@ def fig_decomp(S, f, kind):
     if len(S) >= 3:
         inc += [(dS - summ, 'interaction total (combined − additive)')]
     aS_lab = f'{ORDER_NAME[len(S)]} interaction' if len(S) > 1 else 'main'
-    panels = inc + [(aS, aS_lab)]
+    # 4-way: the pure-tetrad inclusion-exclusion panel is noisy and redundant with
+    # 'interaction total' (combined − additive), so drop it from top4_{euc,tiw}.png.
+    panels = inc + ([(aS, aS_lab)] if len(S) < 4 else [])
     cols = [(_slice(F, cfg)[2], lab) for F, lab in panels]  # (2D array, label)
     xi, Y, _ = _slice(dS, cfg)
     lim = max(np.nanpercentile(np.abs(A), 99) for A, _ in cols)   # shared across all panels
@@ -1197,8 +1199,10 @@ def fig_decomp(S, f, kind):
         axs[0].invert_yaxis()           # Hovmöller: time increases downward
     axs[0].set_ylabel(cfg['ylab'])
     fig.colorbar(pc, ax=list(axs), shrink=.8, label='m/s')
-    fig.suptitle(f'{cfg["name"]}: {term_label(S)} fixed-increment decomposition  '
-                 f'(rightmost = {ORDER_NAME[len(S)]} interaction)')
+    _sub = f'{cfg["name"]}: {term_label(S)} fixed-increment decomposition'
+    if len(S) < 4:
+        _sub += f'  (rightmost = {ORDER_NAME[len(S)]} interaction)'
+    fig.suptitle(_sub)
     fig.savefig(f'{FIGS}/{RUN[frozenset(S)]}_{kind}.png', dpi=140); plt.close(fig)
 
 

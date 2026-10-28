@@ -32,6 +32,10 @@ FIX_COLOR = {'prior': '0.5', 'noVel': 'tab:orange', 'Vel': 'tab:blue'}
 # highlight for the single-control run in fig1(b)/fig2: distinct from the
 # prior gray and noVel/Vel blues (CTRL_COLOR slategray/darkgray/tab:blue collide).
 CTRL_HILITE = 'tab:green'
+# short display labels for the decomposition figures (combos keep their tiw.CONTROL_XX θ+S labels)
+DECOMP_LABEL = {'initialT': 'θ', 'initialS': 'S', 'zonalWind': 'u wind', 'swdown': 'sw'}
+_dlabel = lambda r: DECOMP_LABEL.get(r, tiw.CONTROL_XX[r])
+
 CTRL_COLOR = {'initialT': 'tab:green', 'initialS': 'tab:red', 'zonalWind': 'tab:purple',
               'meridionalWind': 'tab:brown', 'swdown': 'tab:olive',
               'atmosT': 'tab:cyan', 'atmosQ': 'tab:pink', 'lwdown': 'gold',
@@ -441,6 +445,7 @@ def _incr_vectors(prodkey, controls):
 
 
 def fig_decomp_bars(controls, outdir):
+    controls = [c for c in controls if c not in ('atmosT', 'atmosQ', 'lwdown')]
     prods = [p for p in PRODS if os.path.exists(f'{CACHE}/grid_{ANCHOR}_{p[0]}.nc')
              or os.path.exists(f"{CACHE}/model_{ANCHOR}_{p[0].replace('_','_')}.npy")]
     x = np.arange(len(prods)); w = 0.8 / (len(controls) + 1)
@@ -455,7 +460,7 @@ def fig_decomp_bars(controls, outdir):
             shares[key] = betas
             vals.append(100 * (betas[c] if c in controls else 1 - sum(betas.values())))
         col = CTRL_COLOR[c] if c in controls else '0.6'
-        lab = tiw.CONTROL_XX[c] if c in controls else 'interaction + untested'
+        lab = _dlabel(c) if c in controls else 'interaction'
         ax.bar(x + (ci - len(controls) / 2) * w, vals, w, label=lab, color=col)
     ax.set_xticks(x); ax.set_xticklabels([p[1] for p in prods])
     ax.axhline(0, color='k', lw=.8); ax.axhline(100, color='k', lw=.6, ls=':')
@@ -507,7 +512,7 @@ DECOMP_PROFILE_RUNS = [
 
 
 def fig_decomp_rmse_profiles(outdir):
-    fig, axs = plt.subplots(1, 4, figsize=(15, 5), sharey=True)
+    fig, axs = plt.subplots(1, 4, figsize=(15, 5))
     for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
         obs = np.load(f'{CACHE}/obs_{prod}.npz')
         depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
@@ -517,9 +522,10 @@ def fig_decomp_rmse_profiles(outdir):
                 continue
             style = dict(lw=1.3); style.update(kw)
             ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
-                    color=color, label=lbl or tiw.CONTROL_XX[run], **style)
+                    color=color, label=lbl or _dlabel(run), **style)
         ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('RMSE'); ax.grid(alpha=.3)
-    axs[0].set_ylabel('depth (m)'); axs[0].set_ylim(-500, 0)
+        ax.set_ylim(-500 if prod == 'argo' else -315, 0)   # match error_profiles_depth
+    axs[0].set_ylabel('depth (m)')
     axs[0].legend(fontsize=7, loc='lower right')
     fig.suptitle('Depth-resolved RMSE vs obs: single controls & combos vs full solution')
     fig.tight_layout(); fig.savefig(f'{outdir}/decomp_rmse_profiles.png', dpi=140); plt.close(fig)
@@ -544,33 +550,39 @@ def fig_decomp_time(outdir):
     fig, axs = plt.subplots(3, 2, figsize=(13, 9), sharex=True)
     panels = [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V'), ('sst', None), ('ssh', None)]
     for ax, (prod, var) in zip(axs.ravel(), panels):
+        # swdown is a surface-flux control: only meaningful on SST, drop from the subsurface panels
+        runs = [r for r in DECOMP_TIME_RUNS if not (r[0] == 'swdown' and prod != 'sst')]
         if var is not None:
             obs = np.load(f'{CACHE}/obs_{prod}.npz')
             o = obs[f'obs_{var}']; w = obs[f'w_{var}']; day = obs['day']
-            for run, color, lbl, kw in DECOMP_TIME_RUNS:
+            for run, color, lbl, kw in runs:
                 fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
                 if not os.path.exists(fp):
                     continue
                 style = dict(lw=1.3); style.update(kw)
                 ax.plot(tiw.DAYS, _daily_rmse_profile(o, np.load(fp), w, day),
-                        color=color, label=lbl or tiw.CONTROL_XX[run], **style)
+                        color=color, label=lbl or _dlabel(run), **style)
             ax.set_title(f'{prod.upper()} {var}')
         else:
             obs_grid = _gridded_obs(prod)
-            for run, color, lbl, kw in DECOMP_TIME_RUNS:
+            for run, color, lbl, kw in runs:
                 fp = f'{CACHE}/grid_{run}_{prod}.nc'
                 if not os.path.exists(fp):
                     continue
                 style = dict(lw=1.3); style.update(kw)
                 d = xr.open_dataarray(fp).values - obs_grid
                 ax.plot(tiw.DAYS, np.sqrt(np.nanmean(d.reshape(tiw.NT, -1) ** 2, axis=1)),
-                        color=color, label=lbl or tiw.CONTROL_XX[run], **style)
+                        color=color, label=lbl or _dlabel(run), **style)
             ax.set_title(prod.upper())
         ax.grid(alpha=.3); ax.tick_params(axis='x', rotation=30)
     for ax in axs[:, 0]:
         ax.set_ylabel('RMSE')
-    h, l = axs[0, 0].get_legend_handles_labels()
-    fig.legend(h, l, fontsize=8, loc='center left', bbox_to_anchor=(1.0, 0.5))
+    # one deduplicated legend across all panels (so swdown, drawn only on SST, still appears)
+    hl = {}
+    for ax in axs.ravel():
+        for h, l in zip(*ax.get_legend_handles_labels()):
+            hl.setdefault(l, h)
+    fig.legend(hl.values(), hl.keys(), fontsize=8, loc='center left', bbox_to_anchor=(1.0, 0.5))
     fig.suptitle('Misfit evolution: single controls & combos vs full solution')
     fig.tight_layout()
     fig.savefig(f'{outdir}/decomp_time.png', dpi=140, bbox_inches='tight'); plt.close(fig)

@@ -141,6 +141,9 @@ def fig_tiw_hovmoller():
     for j, (r, h, lab) in enumerate(panels):
         pa = axs[0, j].pcolormesh(h.XC, days, h.values, cmap='RdBu_r', vmin=-1.2, vmax=1.2,
                                   shading='auto')
+        if r != 'obs':                 # overlay obs TIW crests as contours
+            axs[0, j].contour(oh.XC, days, oh.values, levels=[-0.6, 0.6], colors='k',
+                              linewidths=0.6, alpha=0.7)
         axs[0, j].set_title(lab, fontsize=12)
         if r == 'obs':                 # row 2, col 1 is blank (obs has no error vs itself)
             axs[1, j].axis('off')
