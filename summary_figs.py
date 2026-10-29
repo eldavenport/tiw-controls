@@ -70,7 +70,7 @@ def fig_error_profiles():
 
 def fig_error_and_decomp_profiles():
     fig = plt.figure(figsize=(15, 11.5), constrained_layout=True)
-    sfigs = fig.subfigures(2, 1)
+    sfigs = fig.subfigures(2, 1, hspace=0.14)
     top, bot = sfigs[0].subplots(1, 4), sfigs[1].subplots(1, 4)
     # top row: prior -> noVel -> TSOnly -> Vel
     for ax, (prod, var, label, unit, zlim) in zip(top, PROF):
@@ -80,7 +80,7 @@ def fig_error_and_decomp_profiles():
             m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')
             dashed = run == 'prior'
             ax.plot(tiw.rmse_profile(obs, m, w), depth, color=color,
-                    lw=2.6 if run in ('Vel', 'TSOnly') else 1.9,
+                    lw=1.9 if dashed else 2.6,
                     ls='--' if dashed else '-', label=rlabel,
                     marker='o' if dashed else None, ms=3, markevery=4, zorder=3)
         ax.set_title(label, fontsize=13)
@@ -98,7 +98,10 @@ def fig_error_and_decomp_profiles():
             fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
             if not os.path.exists(fp):
                 continue
-            style = dict(lw=1.3); style.update(kw)
+            if run == 'prior':
+                style = dict(lw=1.9, ls='--', marker='o', ms=3, markevery=4)
+            else:
+                style = dict(lw=1.3); style.update(kw)
             ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
                     color=color, label=lbl or mf._dlabel(run), **style)
         ax.set_title(label, fontsize=13)
@@ -106,7 +109,7 @@ def fig_error_and_decomp_profiles():
         ax.set_xlim(left=0); ax.grid(alpha=0.25, lw=0.6)
         ax.spines[['top', 'right']].set_visible(False); ax.tick_params(labelsize=10)
     bot[0].set_ylabel('depth (m)', fontsize=12)
-    bot[1].legend(fontsize=9, loc='lower right')
+    bot[1].legend(fontsize=10, loc='lower right')
     sfigs[1].suptitle('TPOSE-Vel Withheld Controls Experiments', fontsize=16, fontweight='bold')
     os.makedirs(OUT, exist_ok=True)
     fig.savefig(f'{OUT}/error_and_decomp_profiles.png', dpi=150); plt.close(fig)
@@ -144,9 +147,9 @@ def fig_skill_maps():
         da = da.sel(YC=slice(*REGION['lat']), XC=slice(*REGION['lon']))
         return da.coarsen(YC=3, XC=3, boundary='trim').mean()
 
-    COLS = [('noVel', 'Vel', 'All TAO obs\nRMSE(noVel) − RMSE(Vel)'),
-            ('noVel', 'TSOnly', 'via TAO T/S\nRMSE(noVel) − RMSE(TSOnly)'),
-            ('TSOnly', 'Vel', 'via velocity obs\nRMSE(TSOnly) − RMSE(Vel)')]
+    COLS = [('Vel', 'noVel', 'All TAO obs\nRMSE(Vel) − RMSE(noVel)'),
+            ('TSOnly', 'noVel', 'via TAO T/S\nRMSE(TSOnly) − RMSE(noVel)'),
+            ('Vel', 'TSOnly', 'via velocity obs\nRMSE(Vel) − RMSE(TSOnly)')]
     fig, axs = plt.subplots(1, 3, figsize=(22, 3.6), sharex=True, sharey=True,
                             constrained_layout=True)
     for ax, (a, b, title) in zip(axs, COLS):
@@ -158,8 +161,6 @@ def fig_skill_maps():
         ax.set_title(title, fontsize=12); ax.set_xlabel('lon (°E)')
     axs[0].set_ylabel('lat (°N)')
     fig.colorbar(pc, ax=axs, shrink=0.85, label='SST RMSE difference (°C)')
-    fig.suptitle('Where TAO reduces SST error, split by obs type   '
-                 '(red = positive difference = RMSE reduced; ▼ = equatorial TAO moorings)', fontsize=13)
     fig.savefig(f'{OUT}/skill_maps_sst_by_obs.png', dpi=150); plt.close(fig)
     print('wrote skill_maps_sst_by_obs.png')
 
