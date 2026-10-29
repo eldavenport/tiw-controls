@@ -88,7 +88,7 @@ def fig_error_and_decomp_profiles():
         ax.grid(alpha=0.25, lw=0.6); ax.spines[['top', 'right']].set_visible(False)
         ax.tick_params(labelsize=10)
     top[0].set_ylabel('depth (m)', fontsize=12)
-    top[0].legend(fontsize=10, loc='lower right', frameon=True, framealpha=0.9)
+    top[1].legend(fontsize=12, loc='lower right', frameon=True, framealpha=0.9)
     sfigs[0].suptitle('Full Solutions', fontsize=16, fontweight='bold')
     # bottom row: single-control & combo decomposition vs full solution
     for ax, (prod, var, label, unit, _) in zip(bot, PROF):
@@ -106,7 +106,7 @@ def fig_error_and_decomp_profiles():
         ax.set_xlim(left=0); ax.grid(alpha=0.25, lw=0.6)
         ax.spines[['top', 'right']].set_visible(False); ax.tick_params(labelsize=10)
     bot[0].set_ylabel('depth (m)', fontsize=12)
-    bot[0].legend(fontsize=7, loc='lower right')
+    bot[1].legend(fontsize=9, loc='lower right')
     sfigs[1].suptitle('TPOSE-Vel Withheld Controls Experiments', fontsize=16, fontweight='bold')
     os.makedirs(OUT, exist_ok=True)
     fig.savefig(f'{OUT}/error_and_decomp_profiles.png', dpi=150); plt.close(fig)
