@@ -219,10 +219,10 @@ def fig_euc_section():
     fig, axs = plt.subplots(1, 3, figsize=(21, 4.2), sharey=True, constrained_layout=True)
     p0 = axs[0].pcolormesh(vel.XG, vel.Z, vel.values, cmap='RdBu_r', vmin=-1, vmax=1, shading='auto')
     axs[0].contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5, 0.8], colors='k', linewidths=0.6)
-    axs[0].set_title('Vel: mean zonal current (EUC)')
+    axs[0].set_title('TPOSE-Vel: mean zonal current')
     fig.colorbar(p0, ax=axs[0], shrink=0.9, label='U (m/s)')
-    for ax, (da, title) in zip(axs[1:], [(ts_imp, 'via TAO T/S  (TSOnly−noVel)'),
-                                         (v_imp, 'via velocity obs  (Vel−TSOnly)')]):
+    for ax, (da, title) in zip(axs[1:], [(ts_imp, 'Influence of TAO T/S (TSOnly − noVel)'),
+                                         (v_imp, 'Influence of TAO U/V (Vel − TSOnly)')]):
         pc = ax.pcolormesh(da.XG, da.Z, da.values, cmap='PuOr_r', vmin=-0.3, vmax=0.3, shading='auto')
         ax.contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5, 0.8], colors='0.4', linewidths=0.5)
         ax.set_title(title)
@@ -230,8 +230,6 @@ def fig_euc_section():
     for ax in axs:
         ax.set_xlabel('lon (°E)')
     axs[0].set_ylabel('depth (m)')
-    fig.suptitle('Equatorial undercurrent (time-mean U): how TAO reshapes it, via T/S vs via velocity obs',
-                 fontsize=13)
     fig.savefig(f'{OUT}/euc_section_by_obs.png', dpi=150); plt.close(fig)
     print('wrote euc_section_by_obs.png')
 
