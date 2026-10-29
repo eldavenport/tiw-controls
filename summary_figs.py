@@ -18,6 +18,7 @@ from matplotlib.lines import Line2D
 from scipy.signal import hilbert, find_peaks
 import tiw
 import anova
+import make_figures as mf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = f'{HERE}/figs/summary'
@@ -65,6 +66,51 @@ def fig_error_profiles():
     os.makedirs(OUT, exist_ok=True)
     fig.savefig(f'{OUT}/error_profiles_depth.png', dpi=150); plt.close(fig)
     print('wrote error_profiles_depth.png')
+
+
+def fig_error_and_decomp_profiles():
+    fig = plt.figure(figsize=(15, 11.5), constrained_layout=True)
+    sfigs = fig.subfigures(2, 1)
+    top, bot = sfigs[0].subplots(1, 4), sfigs[1].subplots(1, 4)
+    # top row: prior -> noVel -> TSOnly -> Vel
+    for ax, (prod, var, label, unit, zlim) in zip(top, PROF):
+        o = np.load(f'{CACHE}/obs_{prod}.npz')
+        depth, obs, w = o['depth'], o[f'obs_{var}'], o[f'w_{var}']
+        for run, color, rlabel in SOLUTIONS:
+            m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')
+            dashed = run == 'prior'
+            ax.plot(tiw.rmse_profile(obs, m, w), depth, color=color,
+                    lw=2.6 if run in ('Vel', 'TSOnly') else 1.9,
+                    ls='--' if dashed else '-', label=rlabel,
+                    marker='o' if dashed else None, ms=3, markevery=4, zorder=3)
+        ax.set_title(label, fontsize=13)
+        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(zlim, 0); ax.set_xlim(left=0)
+        ax.grid(alpha=0.25, lw=0.6); ax.spines[['top', 'right']].set_visible(False)
+        ax.tick_params(labelsize=10)
+    top[0].set_ylabel('depth (m)', fontsize=12)
+    top[0].legend(fontsize=10, loc='lower right', frameon=True, framealpha=0.9)
+    sfigs[0].suptitle('Full Solutions', fontsize=16, fontweight='bold')
+    # bottom row: single-control & combo decomposition vs full solution
+    for ax, (prod, var, label, unit, _) in zip(bot, PROF):
+        obs = np.load(f'{CACHE}/obs_{prod}.npz')
+        depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
+        for run, color, lbl, kw in mf.DECOMP_PROFILE_RUNS:
+            fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
+            if not os.path.exists(fp):
+                continue
+            style = dict(lw=1.3); style.update(kw)
+            ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
+                    color=color, label=lbl or mf._dlabel(run), **style)
+        ax.set_title(label, fontsize=13)
+        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(-500 if prod == 'argo' else -315, 0)
+        ax.set_xlim(left=0); ax.grid(alpha=0.25, lw=0.6)
+        ax.spines[['top', 'right']].set_visible(False); ax.tick_params(labelsize=10)
+    bot[0].set_ylabel('depth (m)', fontsize=12)
+    bot[0].legend(fontsize=7, loc='lower right')
+    sfigs[1].suptitle('TPOSE-Vel Withheld Controls Experiments', fontsize=16, fontweight='bold')
+    os.makedirs(OUT, exist_ok=True)
+    fig.savefig(f'{OUT}/error_and_decomp_profiles.png', dpi=150); plt.close(fig)
+    print('wrote error_and_decomp_profiles.png')
 
 
 # ============================ (2) SST skill decomposition map =====================
@@ -178,7 +224,7 @@ def fig_euc_section():
     for ax, (da, title) in zip(axs[1:], [(ts_imp, 'via TAO T/S  (TSOnly−noVel)'),
                                          (v_imp, 'via velocity obs  (Vel−TSOnly)')]):
         pc = ax.pcolormesh(da.XG, da.Z, da.values, cmap='PuOr_r', vmin=-0.3, vmax=0.3, shading='auto')
-        ax.contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5], colors='0.4', linewidths=0.5)
+        ax.contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5, 0.8], colors='0.4', linewidths=0.5)
         ax.set_title(title)
         fig.colorbar(pc, ax=ax, shrink=0.9, label='ΔU (m/s)')
     for ax in axs:
@@ -413,6 +459,7 @@ def fig_vhov_mooring():
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     fig_error_profiles()
+    fig_error_and_decomp_profiles()
     fig_skill_maps()
     fig_tiw_hovmoller()
     fig_euc_section()
