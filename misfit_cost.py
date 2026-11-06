@@ -318,7 +318,7 @@ def table(df=None):
     for win in [w for w in WINDOWS if w in set(g['window'])]:
         piv = (g[g['window'] == win].pivot_table(index='cell', columns='solution',
                values='chi2', observed=True).reindex(columns=PLOT_ROLES))
-        print(f'\n=== {win}  (chi^2 / obs; 1 = fit to stated error) ===')
+        print(f'\n=== {win}  (normalized cost; 1 = fit to stated error) ===')
         print(piv.to_string(float_format=lambda v: f'{v:6.2f}'))
     out = f'{tiw.CACHE}/misfit_table.csv'
     _grouped(df).to_csv(out, index=False)
@@ -344,7 +344,7 @@ def plot(df=None, out=FIG):
                    hatch=HATCH[role], edgecolor='k', linewidth=0.4)
         ax.axhline(1.0, ls='--', c='0.4', lw=1)
         ax.set_title(win)
-        ax.set_ylabel(r'$\chi^2$ / obs')
+        ax.set_ylabel('normalized cost')
         ax.set_xticks(x)
         ax.set_xticklabels(cells, rotation=55, ha='right', fontsize=8)
         ax.margins(x=0.01)
@@ -356,7 +356,7 @@ def plot(df=None, out=FIG):
     sol = [Patch(facecolor='0.85', edgecolor='k', hatch=HATCH[r], label=r) for r in PLOT_ROLES]
     fig.legend(handles=grp + sol, ncol=10, loc='upper center', frameon=False,
                bbox_to_anchor=(0.5, 1.03))
-    fig.suptitle(r'Model$-$data misfit ($\chi^2$ per observation; dashed = fit to stated error)',
+    fig.suptitle('Model$-$data misfit (normalized cost per observation; dashed = fit to stated error)',
                  y=1.07)
     fig.tight_layout()
     os.makedirs(os.path.dirname(out), exist_ok=True)
