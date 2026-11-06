@@ -34,6 +34,7 @@ PROF = [('argo', 'T', 'Argo θ', '°C', -500),
         ('argo', 'S', 'Argo S', 'psu', -500),
         ('tao', 'U', 'TAO U', 'm/s', -315),
         ('tao', 'V', 'TAO V', 'm/s', -315)]
+LAT_LIMIT = 17.0                 # evaluate all obs only within the ±17 assimilation domain
 MOORINGS = [(190.0, '170°W'), (220.0, '140°W'), (250.0, '110°W')]
 ZBAND = (-150.0, -20.0)          # subsurface depth band for mooring series
 TIW_PER = (15.0, 40.0)           # TIW period band (days)
@@ -45,8 +46,10 @@ def fig_error_profiles():
     for ax, (prod, var, label, unit, zlim) in zip(axs, PROF):
         o = np.load(f'{CACHE}/obs_{prod}.npz')
         depth, obs, w = o['depth'], o[f'obs_{var}'], o[f'w_{var}']
+        latok = np.abs(o['lat']) <= LAT_LIMIT          # ±17 domain restriction
+        obs, w = obs[latok], w[latok]
         for run, color, rlabel in SOLUTIONS:
-            m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')
+            m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')[latok]
             dashed = run == 'prior'
             ax.plot(tiw.rmse_profile(obs, m, w), depth, color=color,
                     lw=2.6 if run in ('Vel', 'TSOnly') else 1.9,
@@ -76,8 +79,10 @@ def fig_error_and_decomp_profiles():
     for ax, (prod, var, label, unit, zlim) in zip(top, PROF):
         o = np.load(f'{CACHE}/obs_{prod}.npz')
         depth, obs, w = o['depth'], o[f'obs_{var}'], o[f'w_{var}']
+        latok = np.abs(o['lat']) <= LAT_LIMIT          # ±17 domain restriction
+        obs, w = obs[latok], w[latok]
         for run, color, rlabel in SOLUTIONS:
-            m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')
+            m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')[latok]
             dashed = run == 'prior'
             ax.plot(tiw.rmse_profile(obs, m, w), depth, color=color,
                     lw=1.9 if dashed else 2.6,
@@ -93,7 +98,8 @@ def fig_error_and_decomp_profiles():
     # bottom row: single-control & combo decomposition vs full solution
     for ax, (prod, var, label, unit, _) in zip(bot, PROF):
         obs = np.load(f'{CACHE}/obs_{prod}.npz')
-        depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
+        latok = np.abs(obs['lat']) <= LAT_LIMIT        # ±17 domain restriction
+        depth = obs['depth']; o = obs[f'obs_{var}'][latok]; w = obs[f'w_{var}'][latok]
         for run, color, lbl, kw in mf.DECOMP_PROFILE_RUNS:
             fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
             if not os.path.exists(fp):
@@ -102,7 +108,7 @@ def fig_error_and_decomp_profiles():
                 style = dict(lw=1.9, ls='--', marker='o', ms=3, markevery=4)
             else:
                 style = dict(lw=1.3); style.update(kw)
-            ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
+            ax.plot(tiw.rmse_profile(o, np.load(fp)[latok], w), depth,
                     color=color, label=lbl or mf._dlabel(run), **style)
         ax.set_title(label, fontsize=13)
         ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(-500 if prod == 'argo' else -315, 0)

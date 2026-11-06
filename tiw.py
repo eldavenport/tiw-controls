@@ -179,15 +179,19 @@ def wet_mask(ds, field):
     return ds[_HFAC[xy]] > 0
 
 
-def load_run(name, prefix=('diag_state',)):
+def load_run(name, prefix=('diag_state',), ref_date=REF_DATE, spec=None):
     """Open a run's daily MDS output; relabel time to physical day dates.
 
     Iters are discovered from disk (robust to missing records, e.g. zonalWind
     has 121/122). A daily-average record at iter N covers physical day
-    N/itPerFile - 1 after REF_DATE; we set `time` to that date so obs-day
+    N/itPerFile - 1 after ref_date; we set `time` to that date so obs-day
     matching is exact and gaps leave a true hole rather than shifting days.
+
+    ref_date/spec let callers reuse this for other assimilation windows: pass
+    spec=(data_dir, itPerFile, delta_t) and that window's ref_date (default is
+    the sep2012 globals, so existing callers are unchanged).
     """
-    data_dir, itpf, dt = RUNS[name]
+    data_dir, itpf, dt = spec if spec is not None else RUNS[name]
     # a .data with no matching .meta can't be read (xmitgcm needs dims/dtype
     # from the meta). Missing model output is a breaking error: fail loud with
     # the offending files so it gets fixed, don't silently drop records.
@@ -204,33 +208,42 @@ def load_run(name, prefix=('diag_state',)):
         print(f'WARNING {name}/{prefix[0]}: missing {len(missing)} record(s) -> '
               f'iters {missing}, days {[i // itpf - 1 for i in missing]}', flush=True)
     ds = open_mdsdataset(data_dir=data_dir, grid_dir=GRID, iters=its,
-                         prefix=list(prefix), ref_date=REF_DATE, delta_t=dt)
+                         prefix=list(prefix), ref_date=ref_date, delta_t=dt)
     for c in ('XC', 'YC', 'Z', 'XG', 'YG'):
         if c in ds.coords:
             ds[c] = ds[c].astype(float)
-    days = pd.to_datetime(REF_DATE) + pd.to_timedelta([i // itpf - 1 for i in its], 'D')
+    days = pd.to_datetime(ref_date) + pd.to_timedelta([i // itpf - 1 for i in its], 'D')
     ds = ds.assign_coords(time=days)
     return ds
 
 
-def load_profile_obs(name, root):
-    """Load a MITprof *_model.nc for a run and attach obs datetime/lon/lat/depth.
+def open_obs(path):
+    """Open a MITprof netcdf (raw input or *_model.nc) and attach obs coords.
 
-    Returns the dataset with added coords: time(iPROF), lon(iPROF), lat(iPROF),
-    depth(iDEPTH, negative/down). Missing value is -9999.
+    Adds coords: time(iPROF), lon(iPROF, 0..360), lat(iPROF), depth(iDEPTH,
+    negative/down). Works on both the run *_model.nc files and the raw input
+    MITprof files in constraints/profiles & tao_profiles (same prof_* vars).
+    Missing value is -9999.
     """
-    data_dir = RUNS[name][0]
-    ds = xr.open_dataset(f'{data_dir}/PROF_eq/{root}_model.nc')
+    ds = xr.open_dataset(path)
     dates = ds['prof_YYYYMMDD'].values.astype(np.int64).astype(str)
-    times = [t.zfill(6) for t in ds['prof_HHMMSS'].values.astype(np.int64).astype(str)]
+    # some files carry HHMMSS=240000 (24:00:00 rollover, invalid for strptime);
+    # obs timing is only used at day resolution downstream, so clamp to 23:59:59.
+    hms = ds['prof_HHMMSS'].values.astype(np.int64)
+    hms = np.where(hms >= 240000, 235959, hms)
+    times = [t.zfill(6) for t in hms.astype(str)]
     dt = pd.to_datetime([d + t for d, t in zip(dates, times)], format='%Y%m%d%H%M%S')
     # obs lon may be -180..180 (TAO); model grid is 0..360 -> normalize.
     lon = ds['prof_lon'].values.astype(float) % 360.0
-    ds = ds.assign_coords(time=('iPROF', dt),
-                          lon=('iPROF', lon),
-                          lat=('iPROF', ds['prof_lat'].values.astype(float)),
-                          depth=('iDEPTH', -ds['prof_depth'].values.astype(float)))
-    return ds
+    return ds.assign_coords(time=('iPROF', dt),
+                            lon=('iPROF', lon),
+                            lat=('iPROF', ds['prof_lat'].values.astype(float)),
+                            depth=('iDEPTH', -ds['prof_depth'].values.astype(float)))
+
+
+def load_profile_obs(name, root):
+    """Load a run's PROF_eq/*_model.nc with obs coords attached (sep2012)."""
+    return open_obs(f'{RUNS[name][0]}/PROF_eq/{root}_model.nc')
 
 
 def sample_profiles(field, obs, mask=None):
@@ -322,13 +335,27 @@ def load_rads(nx, ny, year=2012, nt=366):
     return out
 
 
+_LINKED = '/data/SO6/TPOSE/model_setup/linked_files/TP6'
+
+
+def _grid_err(fname, nx, ny):
+    """Read a static ECCO gencost error grid (nx,ny Fortran order) -> (ny,nx).
+    err<=0 marks gridpoints the cost never used; caller masks those out."""
+    e = np.fromfile(f'{_LINKED}/{fname}', dtype='>f4').reshape((nx, ny), order='F').T
+    e[e <= 0] = np.nan
+    return e
+
+
 def load_sst(nx, ny, year=2012, nt=366):
     """mw_fusion SST obs (ny,nx,nt) and gridded SST error field (ny,nx)."""
     sst = _read_fortran(f'/data/SO6/TPOSE/constraints/sst/mw_fusion_tpose6_{year}', nx, ny, nt)
     sst[sst == -9999.] = np.nan
-    err = np.fromfile('/data/SO6/TPOSE/model_setup/linked_files/TP6/SST_error_tpose6_17Sto17N.bin',
-                      dtype='>f4').reshape((nx, ny), order='F').T
-    return sst, err
+    return sst, _grid_err('SST_error_tpose6_17Sto17N.bin', nx, ny)
+
+
+def load_ssh_err(nx, ny, cm):
+    """RADS SSH error grid (ny,nx), m. cm='3cm' (Jason) or '6cm' (ERS/CryoSat)."""
+    return _grid_err(f'ssh_error_tpose6_17Sto17N_{cm}_in_m.bin', nx, ny)
 
 
 if __name__ == '__main__':
