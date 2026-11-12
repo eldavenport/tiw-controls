@@ -66,8 +66,30 @@ PRODS = [('argo_T', 'Argo T', '°C'), ('argo_S', 'Argo S', 'psu'),
 # 165E dropped: TAO ADCP there has no overlap with the model window.
 MOORINGS = {190.0: '170°W', 220.0: '140°W', 250.0: '110°W'}
 SEP1 = 244
+LAT_LIMIT = 17.0   # compare products only within the ±17 assimilation domain (see compute_metrics)
 
 plt.rcParams.update({'font.size': 11})
+
+
+def _obs(prod):
+    """Cached profile obs for prod, restricted to |lat|<=LAT_LIMIT. Carries the row mask
+    in 'latok' so the matching model samples (model_<run>_<prod>_<var>.npy) get the same cut."""
+    o = {k: v for k, v in np.load(f'{CACHE}/obs_{prod}.npz').items()}
+    lok = np.abs(o['lat']) <= LAT_LIMIT
+    for k in o:
+        if k != 'depth':            # depth is the shared vertical axis, not per-profile
+            o[k] = o[k][lok]
+    o['latok'] = lok
+    return o
+
+
+_GLAT = None
+def _grid_latok():
+    """Row mask (|YC|<=LAT_LIMIT) for the gridded SST/SSH caches, read once from a ref grid."""
+    global _GLAT
+    if _GLAT is None:
+        _GLAT = np.abs(xr.open_dataarray(f'{CACHE}/grid_Vel_sst.nc').YC.values) <= LAT_LIMIT
+    return _GLAT
 
 
 def order_of(control):
@@ -154,12 +176,12 @@ def fig_headline(control, outdir):
 def fig_depth(control, outdir):
     fig, axs = plt.subplots(1, 4, figsize=(15, 5), sharey=True)
     for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
-        obs = np.load(f'{CACHE}/obs_{prod}.npz')
+        obs = _obs(prod); lok = obs['latok']
         depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
         for run in order_of(control):
             fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
             if os.path.exists(fp):
-                ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
+                ax.plot(tiw.rmse_profile(o, np.load(fp)[lok], w), depth,
                         color=line_color(run, control), label=label_of(run, control),
                         **line_kw(run))
         ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('RMSE'); ax.grid(alpha=.3)
@@ -185,12 +207,12 @@ def fig_time(control, outdir):
     panels = [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V'), ('sst', None), ('ssh', None)]
     for ax, (prod, var) in zip(axs.ravel(), panels):
         if var is not None:
-            obs = np.load(f'{CACHE}/obs_{prod}.npz')
+            obs = _obs(prod); lok = obs['latok']
             o = obs[f'obs_{var}']; w = obs[f'w_{var}']; day = obs['day']
             for run in order_of(control):
                 fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
                 if os.path.exists(fp):
-                    ax.plot(tiw.DAYS, _daily_rmse_profile(o, np.load(fp), w, day),
+                    ax.plot(tiw.DAYS, _daily_rmse_profile(o, np.load(fp)[lok], w, day),
                             color=line_color(run, control), label=label_of(run, control),
                             **line_kw(run))
             ax.set_title(f'{prod.upper()} {var}')
@@ -261,22 +283,23 @@ def fig_euc(control, outdir):
 def _gridded_obs(prod):
     ref = xr.open_dataarray(f'{CACHE}/grid_Vel_{prod}.nc')
     ny, nx = ref.sizes['YC'], ref.sizes['XC']
+    lok = _grid_latok()
     if prod == 'sst':
         sst, _ = tiw.load_sst(nx, ny)
-        return np.moveaxis(sst[:, :, SEP1:SEP1 + tiw.NT], 2, 0)
+        return np.moveaxis(sst[:, :, SEP1:SEP1 + tiw.NT], 2, 0)[:, lok, :]
     rads = tiw.load_rads(nx, ny)
     arrs = []
     for sat in rads:
         a = np.moveaxis(rads[sat][:, :, SEP1:SEP1 + tiw.NT], 2, 0)
         arrs.append(a - np.nanmean(a, axis=0, keepdims=True))
-    return np.nanmean(np.stack(arrs), axis=0)
+    return np.nanmean(np.stack(arrs), axis=0)[:, lok, :]
 
 
 def _grid_vals(run, prod):
     """Grid (time,YC,XC) as ndarray, reindexed to the canonical 122-day axis so a run
     missing a day (nv_initialT_uwind=121) stays aligned for cross-run/obs arithmetic."""
     da = xr.open_dataarray(f'{CACHE}/grid_{run}_{prod}.nc')
-    return (da.reindex(time=tiw.DAYS) if 'time' in da.dims else da).values
+    return (da.reindex(time=tiw.DAYS) if 'time' in da.dims else da).values[:, _grid_latok(), :]
 
 
 def _rmse_map(prod, run, obs_grid):
@@ -291,7 +314,7 @@ MAP_LIMS = {'sst': (0.2, 0.2), 'ssh': (0.02, 0.015)}
 
 def fig_maps(control, outdir):
     ref = xr.open_dataarray(f'{CACHE}/grid_Vel_sst.nc')
-    XC, YC = ref.XC.values, ref.YC.values
+    XC, YC = ref.XC.values, ref.YC.values[_grid_latok()]   # maps show the ±17 comparison band
     for prod in ('sst', 'ssh'):
         base = 'prior'
         if not (os.path.exists(f'{CACHE}/grid_{base}_{prod}.nc')
@@ -405,7 +428,7 @@ def fig_intercomp_depth(controls, outdir):
     """Depth-resolved RMSE with every control overlaid (+ prior, full)."""
     fig, axs = plt.subplots(1, 4, figsize=(15, 5), sharey=True)
     for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
-        obs = np.load(f'{CACHE}/obs_{prod}.npz')
+        obs = _obs(prod); lok = obs['latok']
         depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
         series = [('prior', '0.5', 'prior (no DA)', 2, '--'),
                   ('Vel', 'tab:blue', 'TPOSE6-Vel (full)', 2, '-')]
@@ -413,7 +436,7 @@ def fig_intercomp_depth(controls, outdir):
         for run, col, lab, lw, ls in series:
             fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
             if os.path.exists(fp):
-                ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth, col, lw=lw, ls=ls, label=lab)
+                ax.plot(tiw.rmse_profile(o, np.load(fp)[lok], w), depth, col, lw=lw, ls=ls, label=lab)
         ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('RMSE'); ax.grid(alpha=.3)
     axs[0].set_ylabel('depth (m)'); axs[0].set_ylim(-500, 0)
     axs[-1].legend(fontsize=7, loc='lower right')
@@ -432,10 +455,11 @@ def fig_intercomp_depth(controls, outdir):
 def _incr_vectors(prodkey, controls):
     base = 'prior'
     if prodkey in ('sst', 'ssh'):
-        load = lambda r: _grid_vals(r, prodkey)
+        load = lambda r: _grid_vals(r, prodkey)              # grid helper already crops to ±17
     else:
         p, var = prodkey.split('_')
-        load = lambda r: np.load(f'{CACHE}/model_{r}_{p}_{var}.npy')
+        lok = _obs(p)['latok']
+        load = lambda r: np.load(f'{CACHE}/model_{r}_{p}_{var}.npy')[lok]
     mp, mv = load(base), load(ANCHOR)
     mc = {c: load(c) for c in controls}
     v = np.isfinite(mp) & np.isfinite(mv)
@@ -474,9 +498,9 @@ def fig_decomp_bars(controls, outdir):
 def fig_decomp_depth(controls, outdir):
     fig, axs = plt.subplots(1, 4, figsize=(15, 5), sharey=True)
     for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
-        L = lambda r: np.load(f'{CACHE}/model_{r}_{prod}_{var}.npy')
+        obs = _obs(prod); lok = obs['latok']; depth = obs['depth']
+        L = lambda r: np.load(f'{CACHE}/model_{r}_{prod}_{var}.npy')[lok]
         mp, mv = L('prior'), L(ANCHOR); mc = {c: L(c) for c in controls}
-        obs = np.load(f'{CACHE}/obs_{prod}.npz'); depth = obs['depth']
         valid = np.isfinite(mp) & np.isfinite(mv)
         for c in controls:
             valid &= np.isfinite(mc[c])
@@ -514,14 +538,14 @@ DECOMP_PROFILE_RUNS = [
 def fig_decomp_rmse_profiles(outdir):
     fig, axs = plt.subplots(1, 4, figsize=(15, 5))
     for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
-        obs = np.load(f'{CACHE}/obs_{prod}.npz')
+        obs = _obs(prod); lok = obs['latok']
         depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
         for run, color, lbl, kw in DECOMP_PROFILE_RUNS:
             fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
             if not os.path.exists(fp):
                 continue
             style = dict(lw=1.3); style.update(kw)
-            ax.plot(tiw.rmse_profile(o, np.load(fp), w), depth,
+            ax.plot(tiw.rmse_profile(o, np.load(fp)[lok], w), depth,
                     color=color, label=lbl or _dlabel(run), **style)
         ax.set_title(f'{prod.upper()} {var}'); ax.set_xlabel('RMSE'); ax.grid(alpha=.3)
         ax.set_ylim(-500 if prod == 'argo' else -315, 0)   # match error_profiles_depth
@@ -553,14 +577,14 @@ def fig_decomp_time(outdir):
         # swdown is a surface-flux control: only meaningful on SST, drop from the subsurface panels
         runs = [r for r in DECOMP_TIME_RUNS if not (r[0] == 'swdown' and prod != 'sst')]
         if var is not None:
-            obs = np.load(f'{CACHE}/obs_{prod}.npz')
+            obs = _obs(prod); lok = obs['latok']
             o = obs[f'obs_{var}']; w = obs[f'w_{var}']; day = obs['day']
             for run, color, lbl, kw in runs:
                 fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
                 if not os.path.exists(fp):
                     continue
                 style = dict(lw=1.3); style.update(kw)
-                ax.plot(tiw.DAYS, _daily_rmse_profile(o, np.load(fp), w, day),
+                ax.plot(tiw.DAYS, _daily_rmse_profile(o, np.load(fp)[lok], w, day),
                         color=color, label=lbl or _dlabel(run), **style)
             ax.set_title(f'{prod.upper()} {var}')
         else:
@@ -570,7 +594,7 @@ def fig_decomp_time(outdir):
                 if not os.path.exists(fp):
                     continue
                 style = dict(lw=1.3); style.update(kw)
-                d = xr.open_dataarray(fp).values - obs_grid
+                d = _grid_vals(run, prod) - obs_grid       # _grid_vals crops YC to ±17 + reindexes
                 ax.plot(tiw.DAYS, np.sqrt(np.nanmean(d.reshape(tiw.NT, -1) ** 2, axis=1)),
                         color=color, label=lbl or _dlabel(run), **style)
             ax.set_title(prod.upper())
@@ -594,7 +618,7 @@ def fig_decomp_maps(controls, outdir):
         if not os.path.exists(f'{CACHE}/grid_{base}_{prod}.nc'):
             continue
         ref = xr.open_dataarray(f'{CACHE}/grid_{ANCHOR}_{prod}.nc')
-        XC, YC = ref.XC.values, ref.YC.values
+        XC, YC = ref.XC.values, ref.YC.values[_grid_latok()]   # ±17 comparison band
         gb = _grid_vals(base, prod)
         rmsmap = lambda run: np.sqrt(np.nanmean((_grid_vals(run, prod) - gb) ** 2, axis=0))
         panels = [(ANCHOR, f'full ({ANCHOR}−{base})')] + [(c, tiw.CONTROL_XX[c]) for c in controls]

@@ -28,11 +28,24 @@ PROFILE_PRODUCTS = {
 # obs columns live in whichever run has the *_model.nc; obs are identical.
 OBS_SOURCE = {'argo': 'initialT', 'tao': 'initialT'}
 SEP1 = 244  # 0-based day-of-year index of 2012-09-01 (leap year)
+LAT_LIMIT = 17.0  # score obs only within the ±17 assimilation domain (the ECCO/TPOSE error
+#                   grids are 17S-17N: SST_error_tpose6_17Sto17N.bin). Comparisons between
+#                   products are only valid where every product was assimilated. Matches
+#                   summary_figs.py / misfit_cost.py / profile_windows.py.
 
 
 def day_index(obs):
     return (pd.to_datetime(obs['time'].values).floor('D')
             - pd.Timestamp(tiw.REF_DATE)).days.values
+
+
+def _prof_rows(run, prod, var, o, man, w, lat):
+    """rmse/wcost/bias for one profile product, restricted to |lat|<=LAT_LIMIT."""
+    lok = np.abs(lat) <= LAT_LIMIT
+    o, man, w = o[lok], man[lok], w[lok]
+    return [(run, f'{prod}_{var}', 'rmse', tiw.rmse(o, man, w)),
+            (run, f'{prod}_{var}', 'wcost', tiw.wcost(o, man, w)),
+            (run, f'{prod}_{var}', 'bias', tiw.bias(o, man, w))]
 
 
 def do_profiles(rows, runs):
@@ -52,11 +65,7 @@ def do_profiles(rows, runs):
                 man = tiw.sample_profiles(fld, obs, mask=tiw.wet_mask(ds, fld))
                 np.save(f'{CACHE}/model_{run}_{prod}_{var}.npy', man)
                 o, w = shared[f'obs_{var}'], shared[f'w_{var}']
-                rows += [
-                    (run, f'{prod}_{var}', 'rmse', tiw.rmse(o, man, w)),
-                    (run, f'{prod}_{var}', 'wcost', tiw.wcost(o, man, w)),
-                    (run, f'{prod}_{var}', 'bias', tiw.bias(o, man, w)),
-                ]
+                rows += _prof_rows(run, prod, var, o, man, w, shared['lat'])
                 print(f'  {run:9s} {prod}_{var}: rmse={rows[-3][3]:.4f}', flush=True)
 
 
@@ -79,6 +88,7 @@ def do_grids(rows, runs):
     ref = tiw.load_run('Vel', prefix=('diag_state',))
     ny, nx = ref.sizes['YC'], ref.sizes['XC']
     wetC = _surface_mask(ref)
+    latm = np.abs(ref.YC.values) <= LAT_LIMIT         # score only the ±17 domain (rows of YC)
     sst_full, _ = tiw.load_sst(nx, ny)                # (ny,nx,366)
     rads_full = tiw.load_rads(nx, ny)                 # dict ja/c2 (ny,nx,366)
 
@@ -87,7 +97,7 @@ def do_grids(rows, runs):
         md = ds['time'].values
         # ---- SST: mw_fusion vs surface THETA (every run has THETA) ----
         mod = np.where(wetC[None], ds['THETA'].isel(Z=0).values, np.nan)
-        d = mod - _obs_at(md, sst_full)
+        d = (mod - _obs_at(md, sst_full))[:, latm, :]
         v = np.isfinite(d)
         rows += [(run, 'sst', 'rmse', float(np.sqrt(np.nanmean(d[v] ** 2)))),
                  (run, 'sst', 'bias', float(np.nanmean(d[v])))]
@@ -109,12 +119,57 @@ def do_grids(rows, runs):
         for full in rads_full.values():
             o = _obs_at(dss['time'].values, full)
             o = o - np.nanmean(o, axis=0, keepdims=True)
-            dd = eta - o
+            dd = (eta - o)[:, latm, :]
             diffs.append(dd[np.isfinite(dd)])
         dd = np.concatenate(diffs)
         rows += [(run, 'ssh', 'rmse', float(np.sqrt(np.mean(dd ** 2)))),
                  (run, 'ssh', 'bias', float(np.mean(dd)))]
         print(f'  {run:9s} ssh: rmse={rows[-2][3]:.4f}', flush=True)
+
+
+def from_cache():
+    """Rebuild metrics.csv (|lat|<=LAT_LIMIT) from the cached obs/model samples and grids,
+    for every run present in the cache. Use this after changing LAT_LIMIT when the run
+    diag output has been purged (control runs) so a full re-sample isn't possible."""
+    import glob
+    import re
+    rows = []
+    for prod, spec in PROFILE_PRODUCTS.items():
+        obs = np.load(f'{CACHE}/obs_{prod}.npz')
+        for var in spec['vars']:
+            o, w = obs[f'obs_{var}'], obs[f'w_{var}']
+            for fp in sorted(glob.glob(f'{CACHE}/model_*_{prod}_{var}.npy')):
+                run = re.match(rf'model_(.+)_{prod}_{var}\.npy$', os.path.basename(fp)).group(1)
+                rows += _prof_rows(run, prod, var, o, np.load(fp), w, obs['lat'])
+
+    ref = xr.open_dataarray(f'{CACHE}/grid_Vel_sst.nc')
+    ny, nx = ref.sizes['YC'], ref.sizes['XC']
+    latm = np.abs(ref.YC.values) <= LAT_LIMIT
+    sst_full, _ = tiw.load_sst(nx, ny)
+    rads_full = tiw.load_rads(nx, ny)
+    for fp in sorted(glob.glob(f'{CACHE}/grid_*_sst.nc')):
+        run = re.match(r'grid_(.+)_sst\.nc$', os.path.basename(fp)).group(1)
+        da = xr.open_dataarray(fp)
+        d = (da.values - _obs_at(da['time'].values, sst_full))[:, latm, :]
+        v = np.isfinite(d)
+        rows += [(run, 'sst', 'rmse', float(np.sqrt(np.nanmean(d[v] ** 2)))),
+                 (run, 'sst', 'bias', float(np.nanmean(d[v])))]
+        fssh = fp.replace('_sst.nc', '_ssh.nc')
+        if not os.path.exists(fssh):
+            continue
+        eta = xr.open_dataarray(fssh)
+        diffs = []
+        for full in rads_full.values():
+            o = _obs_at(eta['time'].values, full)
+            o = o - np.nanmean(o, axis=0, keepdims=True)
+            dd = (eta.values - o)[:, latm, :]
+            diffs.append(dd[np.isfinite(dd)])
+        dd = np.concatenate(diffs)
+        rows += [(run, 'ssh', 'rmse', float(np.sqrt(np.mean(dd ** 2)))),
+                 (run, 'ssh', 'bias', float(np.mean(dd)))]
+    pd.DataFrame(rows, columns=['run', 'product', 'metric', 'value']
+                 ).to_csv(f'{CACHE}/metrics.csv', index=False)
+    print(f'rewrote {CACHE}/metrics.csv from cache (|lat|<={LAT_LIMIT:g})', flush=True)
 
 
 # runs for the current (initialT) analysis; add CONTROLS as they're verified.
@@ -134,4 +189,7 @@ def main(runs):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:] or DEFAULT_RUNS)
+    if sys.argv[1:2] == ['--from-cache']:
+        from_cache()
+    else:
+        main(sys.argv[1:] or DEFAULT_RUNS)
