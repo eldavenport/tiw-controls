@@ -15,6 +15,7 @@ import matplotlib.dates as mdates
 import matplotlib.patheffects as pe
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
+from matplotlib.ticker import ScalarFormatter, NullFormatter
 from scipy.signal import hilbert, find_peaks
 import tiw
 import anova
@@ -26,9 +27,9 @@ CACHE = tiw.CACHE
 
 # distinct, colorblind-friendly palette (Okabe-Ito) — used across the summary figs
 PRIOR, NOVEL, VEL = '#7a7a7a', '#D55E00', '#0072B2'
-SOLUTIONS = [('prior', PRIOR, 'prior (no DA)'),
-             ('noVel', NOVEL, 'noVel (noTAO)'),
-             ('Vel', VEL, 'Vel (TAO T/S/U/V)')]
+SOLUTIONS = [('prior', PRIOR, 'Vel prior'),
+             ('noVel', NOVEL, 'noVel'),
+             ('Vel', VEL, 'Vel')]
 PROF = [('argo', 'T', 'Argo θ', '°C', -500),
         ('argo', 'S', 'Argo S', 'psu', -500),
         ('tao', 'U', 'TAO U', 'm/s', -315),
@@ -88,12 +89,12 @@ def fig_error_and_decomp_profiles():
                     ls='--' if dashed else '-', label=rlabel,
                     marker='o' if dashed else None, ms=3, markevery=4, zorder=3)
         ax.set_title(label, fontsize=13)
-        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(zlim, 0); ax.set_xlim(left=0)
+        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(-315, 0); ax.set_xlim(left=0)
         ax.grid(alpha=0.25, lw=0.6); ax.spines[['top', 'right']].set_visible(False)
         ax.tick_params(labelsize=10)
     top[0].set_ylabel('depth (m)', fontsize=12)
     top[1].legend(fontsize=12, loc='lower right', frameon=True, framealpha=0.9)
-    sfigs[0].suptitle('Full Solutions', fontsize=16, fontweight='bold')
+    sfigs[0].suptitle('TPOSE-Vel vs. TPOSE-noVel', fontsize=16, fontweight='bold')
     # bottom row: single-control & combo decomposition vs full solution
     for ax, (prod, var, label, unit, _) in zip(bot, PROF):
         obs = np.load(f'{CACHE}/obs_{prod}.npz')
@@ -112,12 +113,12 @@ def fig_error_and_decomp_profiles():
             ax.plot(tiw.rmse_profile(o, np.load(fp)[latok], w), depth,
                     color=color, label=lbl or mf._dlabel(run), **style)
         ax.set_title(label, fontsize=13)
-        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(-500 if prod == 'argo' else -315, 0)
+        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(-315, 0)
         ax.set_xlim(left=0); ax.grid(alpha=0.25, lw=0.6)
         ax.spines[['top', 'right']].set_visible(False); ax.tick_params(labelsize=10)
     bot[0].set_ylabel('depth (m)', fontsize=12)
     bot[1].legend(fontsize=10, loc='lower right')
-    sfigs[1].suptitle('TPOSE-Vel Withheld Controls Experiments', fontsize=16, fontweight='bold')
+    sfigs[1].suptitle('TPOSE-Vel Isolated Controls Experiments', fontsize=16, fontweight='bold')
     os.makedirs(OUT, exist_ok=True)
     fig.savefig(f'{OUT}/error_and_decomp_profiles.png', dpi=150); plt.close(fig)
     print('wrote error_and_decomp_profiles.png')
@@ -290,16 +291,16 @@ def fig_error_spectrum():
             ax = axs[row, j]
             ax.axvspan(*TIW_PER, color='gold', alpha=0.18, label='TIW band' if row == 0 else None)
             ax.set_xscale('log'); ax.set_yscale('log'); ax.set_xlim(60, 4)
+            ax.set_xticks([5, 10, 20, 30, 40, 50, 60])   # log scale, labeled in days
+            ax.xaxis.set_major_formatter(ScalarFormatter())
+            ax.xaxis.set_minor_formatter(NullFormatter())
             ax.grid(alpha=0.25, which='both', lw=0.5)
             ax.set_xlabel('period (days)')
-        axs[0, j].set_title(f'TAO {var}: variance spectrum (obs vs solutions)')
-        axs[1, j].set_title(f'TAO {var}: ERROR spectrum (model − obs)')
+        axs[0, j].set_title(f'TAO {var}: variance spectrum')
+        axs[1, j].set_title(f'TAO {var}: error spectrum')
     axs[0, 0].set_ylabel('PSD'); axs[1, 0].set_ylabel('error PSD')
     axs[0, 0].legend(fontsize=8)
-    fig.suptitle('Where in frequency the TAO U/V signal and error live (3 eq. moorings, 20–150 m)\n'
-                 'top: does each solution match obs variance? bottom: at which periods does error remain?',
-                 fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.tight_layout()
     fig.savefig(f'{OUT}/velocity_error_spectrum.png', dpi=150); plt.close(fig)
     print('wrote velocity_error_spectrum.png')
 

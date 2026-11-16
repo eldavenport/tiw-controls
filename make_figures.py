@@ -27,7 +27,7 @@ ANCHOR = {'vel': 'Vel', 'novel': 'noVel'}[FAMILY]   # family's full-solution run
 FIGS = f'{HERE}/figs/{FAMILY}'   # figures stay in the repo (deliverables)
 
 # fixed context runs (same in every experiment)
-FIX_LABEL = {'prior': 'prior (no DA)', 'noVel': 'TPOSE6-noVel', 'Vel': 'TPOSE6-Vel (full)'}
+FIX_LABEL = {'prior': 'Vel prior', 'noVel': 'noVel', 'Vel': 'Vel'}
 FIX_COLOR = {'prior': '0.5', 'noVel': 'tab:orange', 'Vel': 'tab:blue'}
 # highlight for the single-control run in fig1(b)/fig2: distinct from the
 # prior gray and noVel/Vel blues (CTRL_COLOR slategray/darkgray/tab:blue collide).
@@ -138,7 +138,7 @@ def fig_headline(control, outdir):
     # (a) % RMSE improvement of this control vs prior (iter0) and noVel
     x = np.arange(len(prods)); w = 0.38
     for j, (base, hatch, lbl) in enumerate([('prior', None, 'vs prior (iter0)'),
-                                            ('noVel', '//', 'vs TPOSE6-noVel')]):
+                                            ('noVel', '//', 'vs noVel')]):
         vals = [100 * (r.loc[k, base] - r.loc[k, control]) / r.loc[k, base]
                 if base in r.columns else np.nan for k, _, _ in prods]
         bars = ax[0].bar(x + (j - 0.5) * w, [v if np.isfinite(v) else 0 for v in vals],
@@ -409,7 +409,7 @@ def fig_intercomp_bars(controls, outdir):
     x = np.arange(len(prods)); w = 0.8 / len(controls)
     fig, axs = plt.subplots(2, 1, figsize=(13, 9))
     for ax, base, ttl in [(axs[0], 'prior', '(a) vs prior (iter0)'),
-                          (axs[1], 'noVel', '(b) vs TPOSE6-noVel')]:
+                          (axs[1], 'noVel', '(b) vs noVel')]:
         for ci, c in enumerate(controls):
             vals = [100 * (r.loc[k, base] - r.loc[k, c]) / r.loc[k, base]
                     if base in r.columns else np.nan for k, _, _ in prods]
@@ -430,8 +430,8 @@ def fig_intercomp_depth(controls, outdir):
     for ax, (prod, var) in zip(axs, [('argo', 'T'), ('argo', 'S'), ('tao', 'U'), ('tao', 'V')]):
         obs = _obs(prod); lok = obs['latok']
         depth = obs['depth']; o = obs[f'obs_{var}']; w = obs[f'w_{var}']
-        series = [('prior', '0.5', 'prior (no DA)', 2, '--'),
-                  ('Vel', 'tab:blue', 'TPOSE6-Vel (full)', 2, '-')]
+        series = [('prior', '0.5', 'Vel prior', 2, '--'),
+                  ('Vel', 'tab:blue', 'Vel', 2, '-')]
         series += [(c, CTRL_COLOR[c], tiw.CONTROL_XX[c], 1.3, '-') for c in controls]
         for run, col, lab, lw, ls in series:
             fp = f'{CACHE}/model_{run}_{prod}_{var}.npy'
@@ -524,14 +524,14 @@ def fig_decomp_depth(controls, outdir):
 # with prior and full (Vel) as references: which combination's profile is closest to full.
 # (run, color, explicit-label-or-None, extra plot kwargs)
 DECOMP_PROFILE_RUNS = [
-    ('prior',            '0.5',        'prior (no DA)', dict(marker='o', markersize=3, markevery=6)),
+    ('prior',            '0.5',        'Vel prior', dict(marker='o', markersize=3, markevery=6)),
     ('initialT',         'tab:green',  None,            {}),
     ('initialS',         'tab:red',    None,            {}),
     ('zonalWind',        'tab:purple', None,            {}),
     ('theta_salt',       'tab:orange', None,            {}),
     ('initialT_uwind',   'tab:brown',  None,            {}),
     ('theta_salt_uwind', 'tab:cyan',   None,            {}),
-    ('Vel',              'k',          'Full (TPOSE6-Vel)', dict(lw=1.5)),
+    ('Vel',              'k',          'Full (TPOSE-Vel)', dict(lw=1.5)),
 ]
 
 
@@ -557,7 +557,7 @@ def fig_decomp_rmse_profiles(outdir):
 
 # fig3-style misfit-evolution overlay: profile runs plus xx_swdown and the 4-way top4.
 DECOMP_TIME_RUNS = [
-    ('prior',            '0.5',        'prior (no DA)', dict(marker='o', markersize=3, markevery=8)),
+    ('prior',            '0.5',        'Vel prior', dict(marker='o', markersize=3, markevery=8)),
     ('initialT',         'tab:green',  None,            {}),
     ('initialS',         'tab:red',    None,            {}),
     ('zonalWind',        'tab:purple', None,            {}),
@@ -566,7 +566,7 @@ DECOMP_TIME_RUNS = [
     ('initialT_uwind',   'tab:brown',  None,            {}),
     ('theta_salt_uwind', 'tab:cyan',   None,            {}),
     ('top4',             'magenta',    None,            {}),
-    ('Vel',              'k',          'Full (TPOSE6-Vel)', dict(lw=1.5)),
+    ('Vel',              'k',          'Full (TPOSE-Vel)', dict(lw=1.5)),
 ]
 
 

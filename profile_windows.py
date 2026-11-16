@@ -15,9 +15,9 @@ import tiw
 import misfit_cost as mc
 
 LAT = mc.LAT_LIMIT
-SOLS = [('prior', '#7a7a7a', 'prior (no DA)'),
-        ('noVel', '#D55E00', 'noVel (noTAO)'),
-        ('Vel',   '#0072B2', 'Vel (TAO T/S/U/V)')]
+SOLS = [('prior', '#7a7a7a', 'Vel prior'),
+        ('noVel', '#D55E00', 'noVel'),
+        ('Vel',   '#0072B2', 'Vel')]
 # product -> obs file per year + variables + axis label/limits
 PROD = [
     ('argo', 'T', 'Argo θ', '°C', -500, lambda y: f'{mc._C}/USGO_TP_{y}_PFL_D_w.nc'),
