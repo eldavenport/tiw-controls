@@ -623,12 +623,12 @@ def tiw_phase_amp(channel):
 #   coherence(t) = |<ẑ_Vel,z_run>| / ||z_run||  in [0,1]  (how wave-like/aligned)
 # Resolves the hypothesis in time: θ should lock phase early; u wind should drive
 # the amplitude growth; θ+u wind should amplify an already-correctly-phased wave.
-PA_RUNS = [('prior', '0.5', 'prior (no DA)'), ('noVel', 'tab:orange', 'TPOSE6-noVel'),
+PA_RUNS = [('prior', '0.5', 'Vel prior'), ('noVel', 'tab:orange', 'noVel'),
            ('initialT', 'tab:green', 'θ (xx_theta)'),
            ('zonalWind', 'tab:purple', 'u wind (xx_uwind)'),
            ('initialT_uwind', 'tab:brown', 'θ+u wind'),
            ('top4', 'magenta', 'θ+S+u wind+sw'),
-           ('TSOnly', 'tab:cyan', 'TAO T/S only'), ('Vel', 'k', 'Full (TPOSE6-Vel)')]
+           ('TSOnly', 'tab:cyan', 'TAO T/S only'), ('Vel', 'k', 'Full (TPOSE-Vel)')]
 
 
 def tiw_pa_timeseries(channel, ref='Vel'):
@@ -682,8 +682,8 @@ VS_OBS_RUNS = ['prior', 'noVel', 'initialT', 'initialS', 'zonalWind', 'swdown',
 
 
 def _run_label(r):
-    return {'prior': 'prior (no DA)', 'noVel': 'TPOSE6-noVel',
-            'TSOnly': 'TAO T/S only', 'Vel': 'Full (Vel)'}.get(r) or tiw.CONTROL_XX.get(r, r)
+    return {'prior': 'Vel prior', 'noVel': 'noVel',
+            'TSOnly': 'TAO T/S only', 'Vel': 'Full (TPOSE-Vel)'}.get(r) or tiw.CONTROL_XX.get(r, r)
 
 
 def _skill_bars(df, suptitle, fname, coh_title):

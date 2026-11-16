@@ -18,9 +18,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = f'{HERE}/figs/comparison'
 CACHE = tiw.CACHE
 # family -> (anchor run in metrics.csv, label, color)
-FAM = {'novel':  ('noVel',  'noVel (noTAO)',   'tab:orange'),
-       'tsonly': ('TSOnly', 'TSOnly (TAO T/S)', 'tab:green'),
-       'vel':    ('Vel',    'Vel (TAO T/S/U/V)', 'tab:blue')}
+FAM = {'novel':  ('noVel',  'noVel',   'tab:orange'),
+       'tsonly': ('TSOnly', 'TSOnly', 'tab:green'),
+       'vel':    ('Vel',    'Vel', 'tab:blue')}
 PRODS = [('argo_T', 'Argo T'), ('argo_S', 'Argo S'), ('tao_U', 'TAO U'),
          ('tao_V', 'TAO V'), ('sst', 'SST'), ('ssh', 'SSH')]
 MAINS = ['θ', 'S', 'u wind', 'sw']

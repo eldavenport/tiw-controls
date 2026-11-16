@@ -342,40 +342,50 @@ def table(df=None):
     print('\nwrote', out)
 
 
+def _cell_bars(ax, cells, color, getval):
+    """Grouped bars (one group per PLOT_ROLE) for the consolidated cells on `ax`."""
+    x, bw = np.arange(len(cells)), 0.38
+    for j, role in enumerate(PLOT_ROLES):
+        off = (j - (len(PLOT_ROLES) - 1) / 2) * bw
+        ax.bar(x + off, [getval(role, c) for c in cells], bw,
+               color=[color[c] for c in cells], hatch=HATCH[role],
+               edgecolor='k', linewidth=0.4)
+    ax.axhline(1.0, ls='--', c='0.4', lw=1)
+    ax.set_ylabel('Normalized Cost', fontsize=14)
+    ax.set_xticks(x); ax.set_xticklabels(cells, rotation=55, ha='right', fontsize=12)
+    ax.tick_params(axis='y', labelsize=12)
+    ax.margins(x=0.01)
+
+
 def plot(df=None, out=FIG):
     if df is None:
         df = pd.read_csv(CSV)
     g = _grouped(df)
     color = {c: GROUP_COLOR[CELL_CAT[c]] for c in CELL_ORDER}
-    gi = g.set_index(['window', 'solution', 'cell'])
+    gi = g.set_index(['window', 'solution', 'cell'])['chi2']
     cells = [c for c in CELL_ORDER if c in set(g['cell'])]
-    x = np.arange(len(cells))
-    bw = 0.38
     wins = [w for w in WINDOWS if w in set(df['window'])]
-    fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True, sharey=True)
-    for ax, win in zip(axes.ravel(), wins):
-        for j, role in enumerate(PLOT_ROLES):
-            off = (j - (len(PLOT_ROLES) - 1) / 2) * bw
-            vals = [gi['chi2'].get((win, role, c), np.nan) for c in cells]
-            ax.bar(x + off, vals, bw, color=[color[c] for c in cells],
-                   hatch=HATCH[role], edgecolor='k', linewidth=0.4)
-        ax.axhline(1.0, ls='--', c='0.4', lw=1)
+    # all-windows aggregate: obs-count-weighted pooled normalized cost = Σ w(o-m)² / Σ N
+    pooled = g.groupby(['solution', 'cell']).agg(sw=('sw', 'sum'), nobs=('nobs', 'sum'))
+    pi = (pooled['sw'] / pooled['nobs'])
+    # layout: pooled panel centered on top (row 0), the 4 windows in 2x2 below
+    fig = plt.figure(figsize=(14, 11.5))
+    gs = fig.add_gridspec(3, 4, hspace=0.62, wspace=0.3)
+    ax_agg = fig.add_subplot(gs[0, 1:3])
+    _cell_bars(ax_agg, cells, color, lambda role, c: pi.get((role, c), np.nan))
+    ax_agg.set_title('all windows pooled', fontweight='bold')
+    for (r, c0, c1), win in zip([(1, 0, 2), (1, 2, 4), (2, 0, 2), (2, 2, 4)], wins):
+        ax = fig.add_subplot(gs[r, c0:c1], sharey=ax_agg)
+        _cell_bars(ax, cells, color, lambda role, c, win=win: gi.get((win, role, c), np.nan))
         ax.set_title(win)
-        ax.set_ylabel('normalized cost')
-        ax.set_xticks(x)
-        ax.set_xticklabels(cells, rotation=55, ha='right', fontsize=8)
-        ax.margins(x=0.01)
-    for ax in axes.ravel()[len(wins):]:
-        ax.set_visible(False)
     cats = {CELL_CAT[c] for c in cells}        # only legend the categories actually shown
     grp = [Patch(facecolor=c, edgecolor='k', label=gname)
            for gname, c in GROUP_COLOR.items() if gname in cats]
     sol = [Patch(facecolor='0.85', edgecolor='k', hatch=HATCH[r], label=r) for r in PLOT_ROLES]
-    fig.legend(handles=grp + sol, ncol=10, loc='upper center', frameon=False,
-               bbox_to_anchor=(0.5, 1.03))
-    fig.suptitle('Model$-$data misfit (normalized cost per observation; dashed = fit to stated error)',
-                 y=1.07)
-    fig.tight_layout()
+    lax = fig.add_subplot(gs[0, 0]); lax.axis('off')       # legends fill the empty top corners
+    lax.legend(handles=grp, loc='center', frameon=False, fontsize=13)
+    rax = fig.add_subplot(gs[0, 3]); rax.axis('off')
+    rax.legend(handles=sol, loc='center', frameon=False, fontsize=13)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     fig.savefig(out, dpi=150, bbox_inches='tight')
     print('wrote', out, flush=True)

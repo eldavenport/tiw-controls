@@ -71,7 +71,7 @@ def fig_error_profiles():
     print('wrote error_profiles_depth.png')
 
 
-def fig_error_and_decomp_profiles():
+def fig_error_and_decomp_profiles(prior_label='Vel prior', out='error_and_decomp_profiles.png'):
     fig = plt.figure(figsize=(15, 11.5), constrained_layout=True)
     sfigs = fig.subfigures(2, 1, hspace=0.06)
     top, bot = sfigs[0].subplots(1, 4), sfigs[1].subplots(1, 4)
@@ -86,14 +86,14 @@ def fig_error_and_decomp_profiles():
             dashed = run == 'prior'
             ax.plot(tiw.rmse_profile(obs, m, w), depth, color=color,
                     lw=1.9 if dashed else 2.6,
-                    ls='--' if dashed else '-', label=rlabel,
+                    ls='--' if dashed else '-', label=prior_label if dashed else rlabel,
                     marker='o' if dashed else None, ms=3, markevery=4, zorder=3)
         ax.set_title(label, fontsize=13)
-        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(-315, 0); ax.set_xlim(left=0)
+        ax.set_xlabel(f'RMSE ({unit})', fontsize=14); ax.set_ylim(-315, 0); ax.set_xlim(left=0)
         ax.grid(alpha=0.25, lw=0.6); ax.spines[['top', 'right']].set_visible(False)
-        ax.tick_params(labelsize=10)
-    top[0].set_ylabel('depth (m)', fontsize=12)
-    top[1].legend(fontsize=12, loc='lower right', frameon=True, framealpha=0.9)
+        ax.tick_params(labelsize=13)
+    top[0].set_ylabel('depth (m)', fontsize=14)
+    top[2].legend(fontsize=14, loc='lower right', frameon=True, framealpha=0.9)   # panel 3 (TAO U), matches bottom row
     sfigs[0].suptitle('TPOSE-Vel vs. TPOSE-noVel', fontsize=16, fontweight='bold')
     # bottom row: single-control & combo decomposition vs full solution
     for ax, (prod, var, label, unit, _) in zip(bot, PROF):
@@ -113,15 +113,15 @@ def fig_error_and_decomp_profiles():
             ax.plot(tiw.rmse_profile(o, np.load(fp)[latok], w), depth,
                     color=color, label=lbl or mf._dlabel(run), **style)
         ax.set_title(label, fontsize=13)
-        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(-315, 0)
+        ax.set_xlabel(f'RMSE ({unit})', fontsize=14); ax.set_ylim(-315, 0)
         ax.set_xlim(left=0); ax.grid(alpha=0.25, lw=0.6)
-        ax.spines[['top', 'right']].set_visible(False); ax.tick_params(labelsize=10)
-    bot[0].set_ylabel('depth (m)', fontsize=12)
-    bot[1].legend(fontsize=10, loc='lower right')
+        ax.spines[['top', 'right']].set_visible(False); ax.tick_params(labelsize=13)
+    bot[0].set_ylabel('depth (m)', fontsize=14)
+    bot[2].legend(fontsize=12, loc='lower right')   # panel 3 (TAO U); clears the Argo-S data
     sfigs[1].suptitle('TPOSE-Vel Isolated Controls Experiments', fontsize=16, fontweight='bold')
     os.makedirs(OUT, exist_ok=True)
-    fig.savefig(f'{OUT}/error_and_decomp_profiles.png', dpi=150); plt.close(fig)
-    print('wrote error_and_decomp_profiles.png')
+    fig.savefig(f'{OUT}/{out}', dpi=150); plt.close(fig)
+    print('wrote', out)
 
 
 # ============================ (2) SST skill decomposition map =====================
@@ -460,6 +460,7 @@ if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
     fig_error_profiles()
     fig_error_and_decomp_profiles()
+    fig_error_and_decomp_profiles(prior_label='prior', out='error_and_decomp_profiles_sep2012.png')
     fig_skill_maps()
     fig_tiw_hovmoller()
     fig_euc_section()
