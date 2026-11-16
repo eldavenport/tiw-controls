@@ -1,5 +1,5 @@
 """
-Summary comparison figures across the three full solutions (noVel / TSOnly / Vel),
+Summary comparison figures across the two full solutions (noVel / Vel),
 focused on SST, Argo T/S and TAO U/V (SSH deliberately excluded). Deliverables land
 in figs/summary/. Reuses the cached obs/model samples, grids, and euctiw fields, plus
 the TAO daily-series helpers in anova.py.
@@ -25,10 +25,9 @@ OUT = f'{HERE}/figs/summary'
 CACHE = tiw.CACHE
 
 # distinct, colorblind-friendly palette (Okabe-Ito) — used across the summary figs
-PRIOR, NOVEL, TSONLY, VEL = '#7a7a7a', '#D55E00', '#009E73', '#0072B2'
+PRIOR, NOVEL, VEL = '#7a7a7a', '#D55E00', '#0072B2'
 SOLUTIONS = [('prior', PRIOR, 'prior (no DA)'),
              ('noVel', NOVEL, 'noVel (noTAO)'),
-             ('TSOnly', TSONLY, 'TSOnly (TAO T/S)'),
              ('Vel', VEL, 'Vel (TAO T/S/U/V)')]
 PROF = [('argo', 'T', 'Argo θ', '°C', -500),
         ('argo', 'S', 'Argo S', 'psu', -500),
@@ -52,7 +51,7 @@ def fig_error_profiles():
             m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')[latok]
             dashed = run == 'prior'
             ax.plot(tiw.rmse_profile(obs, m, w), depth, color=color,
-                    lw=2.6 if run in ('Vel', 'TSOnly') else 1.9,
+                    lw=2.6 if run == 'Vel' else 1.9,
                     ls='--' if dashed else '-', label=rlabel,
                     marker='o' if dashed else None, ms=3, markevery=4, zorder=3)
         ax.set_title(label, fontsize=13, fontweight='bold')
@@ -61,7 +60,7 @@ def fig_error_profiles():
         ax.tick_params(labelsize=10)
     axs[0].set_ylabel('depth (m)', fontsize=12)
     axs[0].legend(fontsize=10, loc='lower right', frameon=True, framealpha=0.9)
-    fig.suptitle('Error vs depth: prior → noVel → TSOnly → Vel\n'
+    fig.suptitle('Error vs depth: prior → noVel → Vel\n'
                  'TAO T/S corrects θ/S everywhere; only the velocity constraint pulls '
                  'TAO U/V error down through the thermocline',
                  fontsize=13)
@@ -73,9 +72,9 @@ def fig_error_profiles():
 
 def fig_error_and_decomp_profiles():
     fig = plt.figure(figsize=(15, 11.5), constrained_layout=True)
-    sfigs = fig.subfigures(2, 1, hspace=0.14)
+    sfigs = fig.subfigures(2, 1, hspace=0.06)
     top, bot = sfigs[0].subplots(1, 4), sfigs[1].subplots(1, 4)
-    # top row: prior -> noVel -> TSOnly -> Vel
+    # top row: prior -> noVel -> Vel
     for ax, (prod, var, label, unit, zlim) in zip(top, PROF):
         o = np.load(f'{CACHE}/obs_{prod}.npz')
         depth, obs, w = o['depth'], o[f'obs_{var}'], o[f'w_{var}']
@@ -107,7 +106,9 @@ def fig_error_and_decomp_profiles():
             if run == 'prior':
                 style = dict(lw=1.9, ls='--', marker='o', ms=3, markevery=4)
             else:
-                style = dict(lw=1.3); style.update(kw)
+                style = dict(lw=1.8); style.update(kw)   # thicker controls
+                if color == 'k':                         # thin the full-Vel reference line
+                    style['lw'] = 1.2
             ax.plot(tiw.rmse_profile(o, np.load(fp)[latok], w), depth,
                     color=color, label=lbl or mf._dlabel(run), **style)
         ax.set_title(label, fontsize=13)
@@ -146,27 +147,22 @@ def fig_skill_maps():
     sst_full, _ = tiw.load_sst(nx, ny)
     obs = _obs_on_days(sst_full, days)
     mean_sst = np.nanmean(obs, axis=0)
-    rmse = {r: _sst_rmse_map(r, obs) for r in ('noVel', 'TSOnly', 'Vel')}
+    rmse = {r: _sst_rmse_map(r, obs) for r in ('noVel', 'Vel')}
 
     def crop_coarsen(a):
         da = xr.DataArray(a, coords={'YC': yc, 'XC': xc}, dims=['YC', 'XC'])
         da = da.sel(YC=slice(*REGION['lat']), XC=slice(*REGION['lon']))
         return da.coarsen(YC=3, XC=3, boundary='trim').mean()
 
-    COLS = [('Vel', 'noVel', 'All TAO obs\nRMSE(Vel) − RMSE(noVel)'),
-            ('TSOnly', 'noVel', 'via TAO T/S\nRMSE(TSOnly) − RMSE(noVel)'),
-            ('Vel', 'TSOnly', 'via velocity obs\nRMSE(Vel) − RMSE(TSOnly)')]
-    fig, axs = plt.subplots(1, 3, figsize=(22, 3.6), sharex=True, sharey=True,
-                            constrained_layout=True)
-    for ax, (a, b, title) in zip(axs, COLS):
-        red = crop_coarsen(rmse[a] - rmse[b])
-        pc = ax.pcolormesh(red.XC, red.YC, red.values, cmap='RdBu_r',
-                           vmin=-0.4, vmax=0.4, shading='auto')
-        ax.plot([m[0] for m in TAO_EQ], [m[1] for m in TAO_EQ], 'kv', ms=8,
-                markerfacecolor='yellow', markeredgewidth=0.9)
-        ax.set_title(title, fontsize=12); ax.set_xlabel('lon (°E)')
-    axs[0].set_ylabel('lat (°N)')
-    fig.colorbar(pc, ax=axs, shrink=0.85, label='SST RMSE difference (°C)')
+    fig, ax = plt.subplots(figsize=(9, 3.6), constrained_layout=True)
+    red = crop_coarsen(rmse['Vel'] - rmse['noVel'])
+    pc = ax.pcolormesh(red.XC, red.YC, red.values, cmap='RdBu_r',
+                       vmin=-0.4, vmax=0.4, shading='auto')
+    ax.plot([m[0] for m in TAO_EQ], [m[1] for m in TAO_EQ], 'kv', ms=8,
+            markerfacecolor='yellow', markeredgewidth=0.9)
+    ax.set_title('All TAO obs\nRMSE(Vel) − RMSE(noVel)', fontsize=12)
+    ax.set_xlabel('lon (°E)'); ax.set_ylabel('lat (°N)')
+    fig.colorbar(pc, ax=ax, shrink=0.85, label='SST RMSE difference (°C)')
     fig.savefig(f'{OUT}/skill_maps_sst_by_obs.png', dpi=150); plt.close(fig)
     print('wrote skill_maps_sst_by_obs.png')
 
@@ -188,8 +184,8 @@ def fig_tiw_hovmoller():
     oh = _sst_hov(_obs_on_days(sst_full, days), yc, xc)
     panels = [('obs', oh, 'mw_fusion obs')] + [
         (r, _sst_hov(xr.open_dataarray(f'{CACHE}/grid_{r}_sst.nc').values, yc, xc), lab)
-        for r, lab in [('noVel', 'noVel'), ('TSOnly', 'TSOnly'), ('Vel', 'Vel')]]
-    fig, axs = plt.subplots(2, 4, figsize=(16, 12), sharex=True, sharey=True,
+        for r, lab in [('noVel', 'noVel'), ('Vel', 'Vel')]]
+    fig, axs = plt.subplots(2, 3, figsize=(13, 12), sharex=True, sharey=True,
                             constrained_layout=True)
     for j, (r, h, lab) in enumerate(panels):
         pa = axs[0, j].pcolormesh(h.XC, days, h.values, cmap='RdBu_r', vmin=-1.2, vmax=1.2,
@@ -217,23 +213,21 @@ def fig_tiw_hovmoller():
 
 # ============================ (4) EUC depth-lon section ===========================
 def fig_euc_section():
-    E = {r: xr.open_dataset(f'{CACHE}/euctiw_{r}.nc')['euc'] for r in ('noVel', 'TSOnly', 'Vel')}
+    E = {r: xr.open_dataset(f'{CACHE}/euctiw_{r}.nc')['euc'] for r in ('noVel', 'Vel')}
     sl = dict(Z=slice(0, -300), XG=slice(180, 280))
 
     def cr(da):
         return da.sel(XG=slice(180, 280)).where(da.Z > -300, drop=True)
-    vel, ts_imp, v_imp = cr(E['Vel']), cr(E['TSOnly'] - E['noVel']), cr(E['Vel'] - E['TSOnly'])
-    fig, axs = plt.subplots(1, 3, figsize=(21, 4.2), sharey=True, constrained_layout=True)
+    vel, imp = cr(E['Vel']), cr(E['Vel'] - E['noVel'])
+    fig, axs = plt.subplots(1, 2, figsize=(14, 4.2), sharey=True, constrained_layout=True)
     p0 = axs[0].pcolormesh(vel.XG, vel.Z, vel.values, cmap='RdBu_r', vmin=-1, vmax=1, shading='auto')
     axs[0].contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5, 0.8], colors='k', linewidths=0.6)
     axs[0].set_title('TPOSE-Vel: mean zonal current')
     fig.colorbar(p0, ax=axs[0], shrink=0.9, label='U (m/s)')
-    for ax, (da, title) in zip(axs[1:], [(ts_imp, 'Influence of TAO T/S (TSOnly − noVel)'),
-                                         (v_imp, 'Influence of TAO U/V (Vel − TSOnly)')]):
-        pc = ax.pcolormesh(da.XG, da.Z, da.values, cmap='PuOr_r', vmin=-0.3, vmax=0.3, shading='auto')
-        ax.contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5, 0.8], colors='0.4', linewidths=0.5)
-        ax.set_title(title)
-        fig.colorbar(pc, ax=ax, shrink=0.9, label='ΔU (m/s)')
+    pc = axs[1].pcolormesh(imp.XG, imp.Z, imp.values, cmap='PuOr_r', vmin=-0.3, vmax=0.3, shading='auto')
+    axs[1].contour(vel.XG, vel.Z, vel.values, levels=[0.2, 0.5, 0.8], colors='0.4', linewidths=0.5)
+    axs[1].set_title('Influence of all TAO obs (Vel − noVel)')
+    fig.colorbar(pc, ax=axs[1], shrink=0.9, label='ΔU (m/s)')
     for ax in axs:
         ax.set_xlabel('lon (°E)')
     axs[0].set_ylabel('depth (m)')
@@ -417,10 +411,10 @@ def _phase_speed(a, dlon):
 
 
 def fig_vhov_mooring():
-    """V@50m equatorial Hovmoller (noVel/TSOnly/Vel) with lines tracing the dominant westward
+    """V@50m equatorial Hovmoller (noVel/Vel) with lines tracing the dominant westward
     TIW events, annotated with their phase speed — shows how timing & propagation adjust."""
     VMAX = 0.5
-    hov = {r: _vhov50(r) for r in ('noVel', 'TSOnly', 'Vel')}
+    hov = {r: _vhov50(r) for r in ('noVel', 'Vel')}
     ha = {r: (hov[r] - hov[r].mean('time')) for r in hov}
     lon = ha['Vel'].XC.values
     dlon = float(np.mean(np.diff(lon)))
@@ -431,8 +425,8 @@ def fig_vhov_mooring():
     pk = np.sort(pk[np.argsort(amp_s[pk])[::-1][:2]])
     events = [(max(0, p - 18), min(len(tiw.DAYS), p + 18)) for p in pk]
 
-    fig, axs = plt.subplots(1, 3, figsize=(16, 8), sharey=True, constrained_layout=True)
-    for ax, r in zip(axs, ('noVel', 'TSOnly', 'Vel')):
+    fig, axs = plt.subplots(1, 2, figsize=(11, 8), sharey=True, constrained_layout=True)
+    for ax, r in zip(axs, ('noVel', 'Vel')):
         pc = ax.pcolormesh(lon, tiw.DAYS, ha[r].values, cmap='RdBu_r',
                            vmin=-VMAX, vmax=VMAX, shading='auto')
         for (t0, t1) in events:

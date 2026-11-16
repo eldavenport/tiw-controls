@@ -147,26 +147,43 @@ def _sample(prep, obs):
     return out
 
 
+S_FLOOR = 28.0   # psu; casts dipping below this are corrupted (see _good_profiles)
+
+
+def _good_profiles(obs):
+    """Per-cast QC mask (True = keep): drop whole profiles with non-physical
+    salinity (any valid S < S_FLOOR). Removes a cluster of corrupted WOD-CTD
+    warm-pool casts (12-15N, 140-143E, 2013) whose surface S collapses to ~20 psu
+    and otherwise dominates the CTD-S cost. Model-independent (data QC, not a
+    misfit clip); genuine tropical-Pacific Argo fresh lenses bottom out ~28.3 psu,
+    so the floor touches no legitimate profile. Omits the whole cast (T and S)."""
+    if 'prof_S' not in obs:
+        return np.ones(obs['lat'].size, bool)
+    S, w = obs['prof_S'].values, obs['prof_Sweight'].values
+    return np.where((S != -9999.) & (w > 0), S, np.inf).min(1) >= S_FLOOR
+
+
 def _profiles(rows, win, state):
     # open every obs file for this window once (obs are solution-independent)
-    obs_sets = []        # (spec, obs)
+    obs_sets = []        # (spec, obs, good-cast mask)
     for spec in PROFILE_PRODUCTS:
         for y in WINDOWS[win]['years']:
             p = spec['path'](y)
             if os.path.exists(p):
-                obs_sets.append((spec, tiw.open_obs(p)))
+                obs = tiw.open_obs(p)
+                obs_sets.append((spec, obs, _good_profiles(obs)))
             else:
                 print(f'  {win} skip missing {os.path.basename(p)}', flush=True)
     acc = {}             # (role, name, group) -> [sum_wsq, n]
     for r in state:                         # only roles that loaded
         ds, prep = state[r], {}
-        for spec, obs in obs_sets:
+        for spec, obs, good in obs_sets:
             for v in spec['vars']:
                 if v not in prep:                      # load each field once per run
                     prep[v] = _prep_field(ds, v)
                 man = _sample(prep[v], obs)
-                wt0 = np.where(np.abs(obs['lat'].values)[:, None] <= LAT_LIMIT,
-                               obs[f'prof_{v}weight'].values, 0.0)   # domain restriction
+                keep = (np.abs(obs['lat'].values) <= LAT_LIMIT) & good   # domain + QC
+                wt0 = np.where(keep[:, None], obs[f'prof_{v}weight'].values, 0.0)
                 o, m, wt = tiw._mask(obs[f'prof_{v}'].values, man, wt0)
                 a = acc.setdefault((r, spec['names'][v], spec['group']), [0.0, 0])
                 a[0] += float(np.sum(wt * (o - m) ** 2))
