@@ -72,7 +72,8 @@ def fig_error_profiles():
 
 
 def fig_error_and_decomp_profiles(prior_label='Vel prior', out='error_and_decomp_profiles.png'):
-    fig = plt.figure(figsize=(15, 11.5), constrained_layout=True)
+    fig = plt.figure(figsize=(15, 12.5), constrained_layout=True)
+    fig.get_layout_engine().set(h_pad=0.18)   # extra gap between panels and the below-row legends
     sfigs = fig.subfigures(2, 1, hspace=0.06)
     top, bot = sfigs[0].subplots(1, 4), sfigs[1].subplots(1, 4)
     # top row: prior -> noVel -> Vel
@@ -93,8 +94,10 @@ def fig_error_and_decomp_profiles(prior_label='Vel prior', out='error_and_decomp
         ax.grid(alpha=0.25, lw=0.6); ax.spines[['top', 'right']].set_visible(False)
         ax.tick_params(labelsize=13)
     top[0].set_ylabel('depth (m)', fontsize=14)
-    top[2].legend(fontsize=14, loc='lower right', frameon=True, framealpha=0.9)   # panel 3 (TAO U), matches bottom row
-    sfigs[0].suptitle('TPOSE-Vel vs. TPOSE-noVel', fontsize=16, fontweight='bold')
+    h, l = top[0].get_legend_handles_labels()                      # legend below the row
+    sfigs[0].legend(h, l, loc='outside lower center', ncol=len(l),
+                    fontsize=14, frameon=True, framealpha=0.9)
+    sfigs[0].suptitle('TPOSE-Vel vs TPOSE-noVel (Sep - Dec 2012)', fontsize=16, fontweight='bold')
     # bottom row: single-control & combo decomposition vs full solution
     for ax, (prod, var, label, unit, _) in zip(bot, PROF):
         obs = np.load(f'{CACHE}/obs_{prod}.npz')
@@ -117,8 +120,14 @@ def fig_error_and_decomp_profiles(prior_label='Vel prior', out='error_and_decomp
         ax.set_xlim(left=0); ax.grid(alpha=0.25, lw=0.6)
         ax.spines[['top', 'right']].set_visible(False); ax.tick_params(labelsize=13)
     bot[0].set_ylabel('depth (m)', fontsize=14)
-    bot[2].legend(fontsize=12, loc='lower right')   # panel 3 (TAO U); clears the Argo-S data
-    sfigs[1].suptitle('TPOSE-Vel Isolated Controls Experiments', fontsize=16, fontweight='bold')
+    hh, ll = [], []                                                # union across panels, below the row
+    for ax in bot:
+        for hi, li in zip(*ax.get_legend_handles_labels()):
+            if li not in ll:
+                hh.append(hi); ll.append(li)
+    sfigs[1].legend(hh, ll, loc='outside lower center', ncol=4,
+                    fontsize=12, frameon=True, framealpha=0.9)
+    sfigs[1].suptitle('TPOSE-Vel Isolated Controls Experiments (Sep - Dec 2012)', fontsize=16, fontweight='bold')
     os.makedirs(OUT, exist_ok=True)
     fig.savefig(f'{OUT}/{out}', dpi=150); plt.close(fig)
     print('wrote', out)

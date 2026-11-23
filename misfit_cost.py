@@ -99,6 +99,16 @@ WINDOWS = {
         'Vel':   (f'{_SO3}/mar2013/run_iter16', 72, 1200)}),
 }
 
+# noVel prior (iter0) per window — the noVel counterpart to the Vel prior (the 'prior'
+# role above). Scattered across two trees; sep2012 noVel iter0 == Vel prior (same run).
+# Used by the iter-0 bar plot (compute_noVel_prior) and profile_windows.
+NOVEL_PRIOR = {
+    'sep2012': WINDOWS['sep2012']['runs']['prior'],
+    'nov2012': ('/data/SO3/averdy/TPOSE6/nov2012/diags_iter0', 72, 1200),
+    'jan2013': (f'{_SO6}/jan2013/diags_iter0', 72, 1200),
+    'mar2013': (f'{_SO6}/mar2013/diags_iter0', 72, 1200),
+}
+
 
 # ---- compute -----------------------------------------------------------------
 def _load(win, prefix):
@@ -265,6 +275,32 @@ def compute(windows=None):
     return pd.DataFrame(rows, columns=COLS)
 
 
+def compute_noVel_prior(windows=None):
+    """Sample ONLY the noVel prior (iter0) and merge its rows into the CSV; the
+    other roles are already cached, so this is ~1/4 the cost of a full recompute."""
+    os.makedirs(os.path.dirname(CSV), exist_ok=True)
+    windows = list(windows or WINDOWS)
+    old = pd.read_csv(CSV)
+    rows = [r for r in old.itertuples(index=False, name=None) if r[1] != 'noVel_prior']
+    for win in windows:
+        print('===', win, flush=True)
+        sp = NOVEL_PRIOR.get(win)
+        if sp is None:
+            continue
+        ref = WINDOWS[win]['ref']
+        try:
+            st = {'noVel_prior': tiw.load_run('noVel_prior', ('diag_state',), ref_date=ref, spec=sp)}
+            surf = {'noVel_prior': tiw.load_run('noVel_prior', ('diag_surf',), ref_date=ref, spec=sp)}
+        except (OSError, PermissionError) as e:
+            print(f'  SKIP {win}/noVel_prior: {type(e).__name__}', flush=True)
+            continue
+        _profiles(rows, win, st)
+        _grids(rows, win, st, surf, st['noVel_prior'])
+        pd.DataFrame(rows, columns=COLS).to_csv(CSV, index=False)
+        print(f'  checkpoint ({len(rows)} rows)', flush=True)
+    return pd.DataFrame(rows, columns=COLS)
+
+
 # ---- plot --------------------------------------------------------------------
 # Consolidated reporting cells. Redundant/renamed files fold together, and each
 # solution is scored against the dataset IT assimilated (_keep_row):
@@ -288,7 +324,7 @@ CELL_CAT = {'Argo T': 'Argo', 'Argo S': 'Argo', 'Moored T': 'Moored', 'Moored S'
             'XBT T': 'XBT', 'SST': 'SST', 'SSH': 'SSH'}
 GROUP_COLOR = {'Argo': '#1f77b4', 'Moored': '#17becf', 'Velocity': '#2ca02c',
                'CTD': '#9467bd', 'XBT': '#ff7f0e', 'SST': '#d62728', 'SSH': '#e377c2'}
-HATCH = {'prior': '', 'noVel': '...', 'Vel': '//'}
+HATCH = {'prior': '', 'noVel': '...', 'Vel': '//', 'noVel_prior': 'xx'}
 
 
 def _keep_row(window, solution, product):
@@ -304,7 +340,7 @@ def _keep_row(window, solution, product):
     if product in ('WOD CTD T', 'WOD CTD S'):  # WOD-CTD-OSD = CTD for ALL solutions in-domain
         return True
     if product == 'SIO XBT T':                 # SIO assimilated only by Vel/prior (score each
-        return solution != 'noVel'             #   solution vs what it used; in-domain & minor)
+        return solution not in ('noVel', 'noVel_prior')   # noVel lineage used WOD XBT only
     if product in ('WOD GLD T', 'WOD GLD S'):  # gliders: dropped entirely
         return False
     return True
@@ -342,11 +378,11 @@ def table(df=None):
     print('\nwrote', out)
 
 
-def _cell_bars(ax, cells, color, getval):
-    """Grouped bars (one group per PLOT_ROLE) for the consolidated cells on `ax`."""
+def _cell_bars(ax, cells, color, getval, roles):
+    """Grouped bars (one group per role) for the consolidated cells on `ax`."""
     x, bw = np.arange(len(cells)), 0.38
-    for j, role in enumerate(PLOT_ROLES):
-        off = (j - (len(PLOT_ROLES) - 1) / 2) * bw
+    for j, role in enumerate(roles):
+        off = (j - (len(roles) - 1) / 2) * bw
         ax.bar(x + off, [getval(role, c) for c in cells], bw,
                color=[color[c] for c in cells], hatch=HATCH[role],
                edgecolor='k', linewidth=0.4)
@@ -357,7 +393,9 @@ def _cell_bars(ax, cells, color, getval):
     ax.margins(x=0.01)
 
 
-def plot(df=None, out=FIG):
+def plot(df=None, out=FIG, roles=None, labels=None):
+    roles = roles or PLOT_ROLES
+    labels = labels or {r: r for r in roles}
     if df is None:
         df = pd.read_csv(CSV)
     g = _grouped(df)
@@ -372,16 +410,16 @@ def plot(df=None, out=FIG):
     fig = plt.figure(figsize=(14, 11.5))
     gs = fig.add_gridspec(3, 4, hspace=0.62, wspace=0.3)
     ax_agg = fig.add_subplot(gs[0, 1:3])
-    _cell_bars(ax_agg, cells, color, lambda role, c: pi.get((role, c), np.nan))
+    _cell_bars(ax_agg, cells, color, lambda role, c: pi.get((role, c), np.nan), roles)
     ax_agg.set_title('all windows pooled', fontweight='bold')
     for (r, c0, c1), win in zip([(1, 0, 2), (1, 2, 4), (2, 0, 2), (2, 2, 4)], wins):
         ax = fig.add_subplot(gs[r, c0:c1], sharey=ax_agg)
-        _cell_bars(ax, cells, color, lambda role, c, win=win: gi.get((win, role, c), np.nan))
+        _cell_bars(ax, cells, color, lambda role, c, win=win: gi.get((win, role, c), np.nan), roles)
         ax.set_title(win)
     cats = {CELL_CAT[c] for c in cells}        # only legend the categories actually shown
     grp = [Patch(facecolor=c, edgecolor='k', label=gname)
            for gname, c in GROUP_COLOR.items() if gname in cats]
-    sol = [Patch(facecolor='0.85', edgecolor='k', hatch=HATCH[r], label=r) for r in PLOT_ROLES]
+    sol = [Patch(facecolor='0.85', edgecolor='k', hatch=HATCH[r], label=labels[r]) for r in roles]
     lax = fig.add_subplot(gs[0, 0]); lax.axis('off')       # legends fill the empty top corners
     lax.legend(handles=grp, loc='center', frameon=False, fontsize=13)
     rax = fig.add_subplot(gs[0, 3]); rax.axis('off')
@@ -389,6 +427,12 @@ def plot(df=None, out=FIG):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     fig.savefig(out, dpi=150, bbox_inches='tight')
     print('wrote', out, flush=True)
+
+
+def plot_iter0(out='figs/comparison/misfit_cost_allwindows_iter0.png'):
+    """iter-0 version: Vel prior vs noVel prior (the no-DA background misfit)."""
+    plot(roles=['prior', 'noVel_prior'],
+         labels={'prior': 'Vel prior', 'noVel_prior': 'noVel prior'}, out=out)
 
 
 if __name__ == '__main__':
@@ -400,3 +444,7 @@ if __name__ == '__main__':
         plot()
     if cmd == 'table':
         table()
+    if cmd == 'compute_prior':       # sample only the noVel prior (merges into CSV)
+        compute_noVel_prior(wins)
+    if cmd in ('plot_prior', 'compute_prior'):
+        plot_iter0()
