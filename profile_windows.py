@@ -103,15 +103,12 @@ def plot():
             ax.plot(rmse, depth, color=c, lw=2.4 if sol == 'Vel' else 1.9,
                     ls='--' if isp else '-', label=rlab,
                     marker=MARK.get(sol) if isp else None, ms=3, markevery=4)
-        ntot = int(d[f'Vel_{prod}_{v}_n'].max())
-        ax.set_title(f'{label}  (n≈{ntot})', fontsize=13, fontweight='bold')
+        ax.set_title(label, fontsize=13, fontweight='bold')
         ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(zlim, 0); ax.set_xlim(left=0)
         ax.grid(alpha=0.25, lw=0.6); ax.spines[['top', 'right']].set_visible(False)
     axs[0].set_ylabel('depth (m)', fontsize=12)
     axs[0].legend(fontsize=10, loc='lower right', framealpha=0.9)
-    fig.suptitle('Depth error profiles pooled over all 4 windows, |lat|≤17°  '
-                 '(Vel & noVel priors dashed; TAO velocity is the discriminator)', fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.tight_layout()
     out = 'figs/comparison/error_profiles_depth_17_allwindows.png'
     os.makedirs(os.path.dirname(out), exist_ok=True)
     fig.savefig(out, dpi=150)

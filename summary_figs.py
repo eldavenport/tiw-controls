@@ -41,36 +41,6 @@ TIW_PER = (15.0, 40.0)           # TIW period band (days)
 
 
 # ============================ (1) depth error profiles ============================
-def fig_error_profiles():
-    fig, axs = plt.subplots(1, 4, figsize=(15, 6.5))
-    for ax, (prod, var, label, unit, zlim) in zip(axs, PROF):
-        o = np.load(f'{CACHE}/obs_{prod}.npz')
-        depth, obs, w = o['depth'], o[f'obs_{var}'], o[f'w_{var}']
-        latok = np.abs(o['lat']) <= LAT_LIMIT          # ±17 domain restriction
-        obs, w = obs[latok], w[latok]
-        for run, color, rlabel in SOLUTIONS:
-            m = np.load(f'{CACHE}/model_{run}_{prod}_{var}.npy')[latok]
-            dashed = run == 'prior'
-            ax.plot(tiw.rmse_profile(obs, m, w), depth, color=color,
-                    lw=2.6 if run == 'Vel' else 1.9,
-                    ls='--' if dashed else '-', label=rlabel,
-                    marker='o' if dashed else None, ms=3, markevery=4, zorder=3)
-        ax.set_title(label, fontsize=13, fontweight='bold')
-        ax.set_xlabel(f'RMSE ({unit})'); ax.set_ylim(zlim, 0); ax.set_xlim(left=0)
-        ax.grid(alpha=0.25, lw=0.6); ax.spines[['top', 'right']].set_visible(False)
-        ax.tick_params(labelsize=10)
-    axs[0].set_ylabel('depth (m)', fontsize=12)
-    axs[0].legend(fontsize=10, loc='lower right', frameon=True, framealpha=0.9)
-    fig.suptitle('Error vs depth: prior → noVel → Vel\n'
-                 'TAO T/S corrects θ/S everywhere; only the velocity constraint pulls '
-                 'TAO U/V error down through the thermocline',
-                 fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
-    os.makedirs(OUT, exist_ok=True)
-    fig.savefig(f'{OUT}/error_profiles_depth.png', dpi=150); plt.close(fig)
-    print('wrote error_profiles_depth.png')
-
-
 def fig_error_and_decomp_profiles(prior_label='Vel prior', out='error_and_decomp_profiles.png'):
     fig = plt.figure(figsize=(15, 12.5), constrained_layout=True)
     fig.get_layout_engine().set(h_pad=0.18)   # extra gap between panels and the below-row legends
@@ -467,8 +437,6 @@ def fig_vhov_mooring():
 
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
-    fig_error_profiles()
-    fig_error_and_decomp_profiles()
     fig_error_and_decomp_profiles(prior_label='prior', out='error_and_decomp_profiles_sep2012.png')
     fig_skill_maps()
     fig_tiw_hovmoller()

@@ -435,6 +435,202 @@ def plot_iter0(out='figs/comparison/misfit_cost_allwindows_iter0.png'):
          labels={'prior': 'Vel prior', 'noVel_prior': 'noVel prior'}, out=out)
 
 
+# ---- equatorial / off-equatorial split (second version) ----------------------
+# Every (solution x cell) is split by observation latitude into equatorial
+# (|lat| <= 5 deg) and off-equatorial (5 < |lat| <= 17 deg) model-data misfit.
+# Velocity obs (TAO ADCP/CUR) all sit at the equator, so their off-equatorial
+# bars come out empty by construction -- that is intentional, it shows velocity
+# is only measured on the equator. Separate cache (CSV_R) and figure (FIG_R) so
+# the originals are untouched. Same sampling cost as compute() (one pass).
+CSV_R = f'{tiw.CACHE}/misfit_cost_byregion.csv'
+FIG_R = 'figs/comparison/misfit_cost_allwindows_byregion.png'
+COLS_R = ['window', 'solution', 'product', 'group', 'region', 'nobs', 'chi2']
+WIN_LABEL = {'sep2012': 'Sep - Dec 2012', 'nov2012': 'Nov 2012 - Feb 2013',
+             'jan2013': 'Jan - Apr 2013', 'mar2013': 'Mar - Jun 2013'}
+REGION_ORDER = ['eq', 'off']
+REGION_LABEL = {'total': 'all obs (|lat| ≤ 17°)', 'eq': 'equatorial (≤ 5°)',
+                'off': 'off-equator (5–17°)'}
+# Two cues per region so the eq/off split bars read as distinct from the plain
+# pooled-total bars: fill alpha + edge weight. (solution stays encoded by hatch.)
+REGION_STYLE = {
+    'total': dict(alpha=1.0, linewidth=0.4, edgecolor='black'),
+    'eq':    dict(alpha=0.9, linewidth=1.7, edgecolor='black'),
+    'off':   dict(alpha=0.4, linewidth=1.7, edgecolor='black'),
+}
+
+
+def _region_mask(abslat, region):
+    """|lat| band mask. eq = [0, 5] deg (includes the equator), off = (5, 17]."""
+    if region == 'eq':
+        return abslat <= 5.0
+    return (abslat > 5.0) & (abslat <= LAT_LIMIT)
+
+
+def _profiles_region(rows, win, state):
+    """_profiles, but the model field is sampled once then split into |lat| bands."""
+    obs_sets = []
+    for spec in PROFILE_PRODUCTS:
+        for y in WINDOWS[win]['years']:
+            p = spec['path'](y)
+            if os.path.exists(p):
+                obs = tiw.open_obs(p)
+                obs_sets.append((spec, obs, _good_profiles(obs)))
+            else:
+                print(f'  {win} skip missing {os.path.basename(p)}', flush=True)
+    acc = {}
+    for r in state:
+        ds, prep = state[r], {}
+        for spec, obs, good in obs_sets:
+            alat = np.abs(obs['lat'].values)
+            for v in spec['vars']:
+                if v not in prep:
+                    prep[v] = _prep_field(ds, v)
+                man = _sample(prep[v], obs)                 # sample once per run/field
+                raw, wgt = obs[f'prof_{v}'].values, obs[f'prof_{v}weight'].values
+                for region in REGION_ORDER:
+                    keep = _region_mask(alat, region) & good
+                    o, m, wt = tiw._mask(raw, man, np.where(keep[:, None], wgt, 0.0))
+                    a = acc.setdefault((r, spec['names'][v], spec['group'], region), [0.0, 0])
+                    a[0] += float(np.sum(wt * (o - m) ** 2))
+                    a[1] += o.size
+        del prep
+    for (r, name, group, region), (s, n) in acc.items():
+        chi2 = s / n if n else np.nan
+        rows.append((win, r, name, group, region, n, chi2))
+        print(f'  {win} {r:5s} {name:12s} {region:3s} n={n:7d} chi2/n={chi2:.3f}', flush=True)
+
+
+def _grids_region(rows, win, state, surf, ref):
+    """_grids, but each gridded term (SST, SSH) is split by the model grid |YC|."""
+    years = WINDOWS[win]['years']
+    nx, ny = ref.sizes['XC'], ref.sizes['YC']
+    wetC = (ref['hFacC'].isel(Z=0) > 0).values
+    alat2d = np.broadcast_to(np.abs(ref['YC'].values)[:, None], (ny, nx))
+
+    def regw(w2d, region):          # NaN outside band -> excluded by _weighted
+        return np.where(_region_mask(alat2d, region), w2d, np.nan)
+
+    sst = {y: tiw.load_sst(nx, ny, year=y, nt=NTY[y]) for y in years}
+    wsst = 1.0 / sst[years[0]][1] ** 2
+    for r in state:
+        ds = state[r]
+        md = pd.to_datetime(ds['time'].values)
+        mod = np.where(wetC[None], ds['THETA'].isel(Z=0).values, np.nan)
+        resid = mod - _obs_at_days(md, {y: sst[y][0] for y in years})
+        for region in REGION_ORDER:
+            s, n = _weighted(resid, regw(wsst, region))
+            rows.append((win, r, 'SST', 'Satellite', region, n, s / n if n else np.nan))
+    err = {'ja': tiw.load_ssh_err(nx, ny, '3cm'), 'c2': tiw.load_ssh_err(nx, ny, '6cm')}
+    rads = {y: tiw.load_rads(nx, ny, year=y, nt=NTY[y]) for y in years}
+    for r in surf:
+        ds = surf[r]
+        md = pd.to_datetime(ds['time'].values)
+        eta = np.where(wetC[None], ds['ETAN'].values, np.nan)
+        eta = eta - np.nanmean(eta, axis=0, keepdims=True)
+        for region in REGION_ORDER:
+            s = n = 0
+            for sat in ('ja', 'c2'):
+                o = _obs_at_days(md, {y: rads[y][sat] for y in years})
+                o = o - np.nanmean(o, axis=0, keepdims=True)
+                si, ni = _weighted(eta - o, regw(1.0 / err[sat] ** 2, region))
+                s += si
+                n += ni
+            rows.append((win, r, 'SSH', 'Satellite', region, n, s / n if n else np.nan))
+
+
+def compute_region(windows=None):
+    """Region-split recompute -> CSV_R (leaves the original CSV untouched)."""
+    os.makedirs(os.path.dirname(CSV_R), exist_ok=True)
+    windows = list(windows or WINDOWS)
+    rows = []
+    if os.path.exists(CSV_R):
+        old = pd.read_csv(CSV_R)
+        rows += [r for r in old[~old['window'].isin(windows)].itertuples(index=False, name=None)]
+    for win in windows:
+        print('===', win, flush=True)
+        state = _load(win, 'diag_state')
+        _profiles_region(rows, win, state)
+        surf = _load(win, 'diag_surf')
+        _grids_region(rows, win, state, surf, state['Vel'])
+        pd.DataFrame(rows, columns=COLS_R).to_csv(CSV_R, index=False)
+        print(f'  checkpoint -> {CSV_R} ({len(rows)} rows)', flush=True)
+    return pd.DataFrame(rows, columns=COLS_R)
+
+
+def _grouped_region(df):
+    df = df.copy()
+    df = df[df['product'].isin(CELL_OF)]
+    df = df[[_keep_row(w, s, p) for w, s, p in zip(df['window'], df['solution'], df['product'])]]
+    df['cell'] = df['product'].map(CELL_OF)
+    df['sw'] = df['chi2'] * df['nobs']
+    g = df.groupby(['window', 'solution', 'cell', 'region'], as_index=False).agg(
+        sw=('sw', 'sum'), nobs=('nobs', 'sum'))
+    g['chi2'] = g['sw'] / g['nobs']
+    return g
+
+
+def _cell_bars_region(ax, cells, color, getval, roles, regions):
+    """Grouped bars for `regions` x `roles` per cell (contiguous, centered).
+    region -> alpha+edge weight (REGION_STYLE), solution -> hatch, cell -> color."""
+    x = np.arange(len(cells))
+    series = [(reg, role) for reg in regions for role in roles]
+    n = len(series)
+    bw = 0.82 / n          # fill a fixed fraction of each cell -> wider bars when fewer
+    for i, (reg, role) in enumerate(series):
+        st = REGION_STYLE[reg]
+        ax.bar(x + (i - (n - 1) / 2) * bw, [getval(role, reg, c) for c in cells], bw,
+               color=[color[c] for c in cells], hatch=HATCH[role],
+               alpha=st['alpha'], edgecolor=st['edgecolor'], linewidth=st['linewidth'])
+    ax.axhline(1.0, ls='--', c='0.4', lw=1)
+    ax.set_ylabel('Normalized Cost', fontsize=14)
+    ax.set_xticks(x); ax.set_xticklabels(cells, rotation=55, ha='right', fontsize=12)
+    ax.tick_params(axis='y', labelsize=12)
+    ax.margins(x=0.01)
+
+
+def plot_byregion(df=None, out=FIG_R, roles=None, labels=None):
+    roles = roles or PLOT_ROLES
+    labels = labels or {r: r for r in roles}
+    if df is None:
+        df = pd.read_csv(CSV_R)
+    g = _grouped_region(df)
+    color = {c: GROUP_COLOR[CELL_CAT[c]] for c in CELL_ORDER}
+    cells = [c for c in CELL_ORDER if c in set(g['cell'])]
+    wins = [w for w in WINDOWS if w in set(df['window'])]
+    # top panel: pooled TOTAL (summed over both regions) -> 2 bars/cell
+    tot = g.groupby(['solution', 'cell']).agg(sw=('sw', 'sum'), nobs=('nobs', 'sum'))
+    ti = tot['sw'] / tot['nobs']
+    # per-window panels: region-resolved -> 4 bars/cell
+    gi = g.set_index(['window', 'solution', 'cell', 'region'])['chi2']
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(3, 4, hspace=0.62, wspace=0.3)
+    ax_agg = fig.add_subplot(gs[0, 0:3])                 # wide total panel
+    _cell_bars_region(ax_agg, cells, color,
+                      lambda role, reg, c: ti.get((role, c), np.nan), roles, ['total'])
+    ax_agg.set_title('all windows and regions', fontweight='bold')
+    for (r, c0, c1), win in zip([(1, 0, 2), (1, 2, 4), (2, 0, 2), (2, 2, 4)], wins):
+        ax = fig.add_subplot(gs[r, c0:c1], sharey=ax_agg)
+        _cell_bars_region(ax, cells, color,
+                          lambda role, reg, c, win=win: gi.get((win, role, c, reg), np.nan),
+                          roles, REGION_ORDER)
+        ax.set_title(WIN_LABEL.get(win, win))
+    cats = {CELL_CAT[c] for c in cells}
+    grp = [Patch(facecolor=c, edgecolor='k', label=gname)
+           for gname, c in GROUP_COLOR.items() if gname in cats]
+    sol = [Patch(facecolor='0.85', edgecolor='k', hatch=HATCH[r], label=labels[r]) for r in roles]
+    reg = [Patch(facecolor='0.6', label=REGION_LABEL[rg], **REGION_STYLE[rg])
+           for rg in ('total', 'eq', 'off')]
+    # one combined legend (category, then solution, then region) -> no overlap.
+    # blank spacers separate the three groups.
+    spacer = Patch(facecolor='none', edgecolor='none', label='')
+    handles = grp + [spacer] + sol + [spacer] + reg
+    lax = fig.add_subplot(gs[0, 3]); lax.axis('off')
+    lax.legend(handles=handles, loc='center', frameon=False, fontsize=10, labelspacing=0.55)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    fig.savefig(out, dpi=150, bbox_inches='tight')
+    print('wrote', out, flush=True)
+
+
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else 'all'
     wins = [w for w in sys.argv[2:] if w in WINDOWS] or None   # subset merges with CSV
@@ -448,3 +644,7 @@ if __name__ == '__main__':
         compute_noVel_prior(wins)
     if cmd in ('plot_prior', 'compute_prior'):
         plot_iter0()
+    if cmd == 'compute_region':      # region-split recompute -> CSV_R
+        compute_region(wins)
+    if cmd in ('plot_region', 'compute_region'):
+        plot_byregion()
