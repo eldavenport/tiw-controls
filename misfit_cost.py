@@ -588,14 +588,14 @@ def _cell_bars_region(ax, cells, color, getval, roles, regions):
     ax.margins(x=0.01)
 
 
-def plot_byregion(df=None, out=FIG_R, roles=None, labels=None):
+def plot_byregion(df=None, out=FIG_R, roles=None, labels=None, drop=()):
     roles = roles or PLOT_ROLES
     labels = labels or {r: r for r in roles}
     if df is None:
         df = pd.read_csv(CSV_R)
     g = _grouped_region(df)
     color = {c: GROUP_COLOR[CELL_CAT[c]] for c in CELL_ORDER}
-    cells = [c for c in CELL_ORDER if c in set(g['cell'])]
+    cells = [c for c in CELL_ORDER if c in set(g['cell']) and c not in drop]
     wins = [w for w in WINDOWS if w in set(df['window'])]
     # top panel: pooled TOTAL (summed over both regions) -> 2 bars/cell
     tot = g.groupby(['solution', 'cell']).agg(sw=('sw', 'sum'), nobs=('nobs', 'sum'))
@@ -648,3 +648,4 @@ if __name__ == '__main__':
         compute_region(wins)
     if cmd in ('plot_region', 'compute_region'):
         plot_byregion()
+        plot_byregion(out=FIG_R.replace('.png', '_noCTD.png'), drop=('CTD T', 'CTD S'))
